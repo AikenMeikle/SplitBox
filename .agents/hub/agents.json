@@ -1,0 +1,553 @@
+{
+  "agents": {
+    "session-2d57b488": {
+      "agent_id": "session-2d57b488",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "2d57b488-659c-434d-91fb-318c6595332f",
+      "registered_at": "2026-11-18T19:00:01+00:00",
+      "last_seen": "2026-11-18T19:00:01+00:00",
+      "inbox_cursor": 0
+    },
+    "session-069e333f": {
+      "agent_id": "session-069e333f",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "069e333f-04e4-4795-b830-e1d4f6fc99cf",
+      "registered_at": "2026-11-18T19:00:01+00:00",
+      "last_seen": "2026-11-18T19:31:00+00:00",
+      "inbox_cursor": 0
+    },
+    "session-9a1ffd0f": {
+      "agent_id": "session-9a1ffd0f",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "9a1ffd0f-78cd-4a64-a78f-5b6aa9c214f3",
+      "registered_at": "2026-11-18T19:00:01+00:00",
+      "last_seen": "2026-11-18T19:00:01+00:00",
+      "inbox_cursor": 0
+    },
+    "session-7568d977": {
+      "agent_id": "session-7568d977",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "7568d977-329a-4dea-85ac-10ac14add997",
+      "registered_at": "2026-11-18T19:00:01+00:00",
+      "last_seen": "2026-11-18T19:00:01+00:00",
+      "inbox_cursor": 0
+    },
+    "agent-wiring": {
+      "agent_id": "agent-wiring",
+      "role": "AI Agent Docs & Skill Wiring",
+      "focus": "",
+      "conversation_id": "9a1ffd0f-78cd-4a64-a78f-5b6aa9c214f3",
+      "registered_at": "2026-11-18T19:00:35+00:00",
+      "last_seen": "2026-11-18T19:48:58+00:00",
+      "inbox_cursor": 0
+    },
+    "session-8452fd91": {
+      "agent_id": "session-8452fd91",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "8452fd91-9268-4f93-9134-504061f0d702",
+      "registered_at": "2026-11-18T19:00:43+00:00",
+      "last_seen": "2026-11-18T19:00:43+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a6117edc": {
+      "agent_id": "session-a6117edc",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a6117edc-fcab-4d67-a535-7d8538a8122a",
+      "registered_at": "2026-11-18T19:00:43+00:00",
+      "last_seen": "2026-11-18T19:00:43+00:00",
+      "inbox_cursor": 0
+    },
+    "session-f38ccb7b": {
+      "agent_id": "session-f38ccb7b",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "f38ccb7b-5d69-42e5-86d7-6f1763e4b068",
+      "registered_at": "2026-11-18T19:00:43+00:00",
+      "last_seen": "2026-11-18T19:00:43+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a9af7a38": {
+      "agent_id": "session-a9af7a38",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a9af7a38-7c6a-48fc-89f1-9413d49b7e45",
+      "registered_at": "2026-11-18T19:00:43+00:00",
+      "last_seen": "2026-11-18T19:00:43+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a97a173c": {
+      "agent_id": "session-a97a173c",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a97a173c-53b4-45a8-b39f-b3f5d516ff9f",
+      "registered_at": "2026-11-18T19:00:43+00:00",
+      "last_seen": "2026-11-18T19:00:43+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a132716b": {
+      "agent_id": "session-a132716b",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a132716b-4e3f-499e-9dda-32dd8ee095cf",
+      "registered_at": "2026-11-18T19:00:44+00:00",
+      "last_seen": "2026-11-18T19:00:44+00:00",
+      "inbox_cursor": 0
+    },
+    "session-879fbf53": {
+      "agent_id": "session-879fbf53",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "879fbf53-c822-4014-8e70-f7cb47c5a912",
+      "registered_at": "2026-11-18T19:00:44+00:00",
+      "last_seen": "2026-11-18T19:00:44+00:00",
+      "inbox_cursor": 0
+    },
+    "mock-fintech": {
+      "agent_id": "mock-fintech",
+      "role": "FinTech Split-Pot Mock Builder",
+      "focus": "Build public/mocks/option-2-monzo-fintech/index.html",
+      "conversation_id": "a6117edc-fcab-4d67-a535-7d8538a8122a",
+      "registered_at": "2026-11-18T19:01:01+00:00",
+      "last_seen": "2026-11-18T19:51:26+00:00",
+      "inbox_cursor": 0
+    },
+    "mock-ocado": {
+      "agent_id": "mock-ocado",
+      "role": "Ocado Calm Mock Builder",
+      "focus": "Build public/mocks/option-1-ocado-calm/index.html",
+      "conversation_id": "8452fd91-9268-4f93-9134-504061f0d702",
+      "registered_at": "2026-11-18T19:01:06+00:00",
+      "last_seen": "2026-11-18T19:01:06+00:00",
+      "inbox_cursor": 0
+    },
+    "verifier": {
+      "agent_id": "verifier",
+      "role": "Brand & SVG QA Verifier",
+      "focus": "Verify 5 SplitBox logo suites, contrast, offline rules, and PNG renders",
+      "conversation_id": "a20cc695-737e-4caa-b82d-4f230a771519",
+      "registered_at": "2026-11-18T19:01:22+00:00",
+      "last_seen": "2026-11-18T19:44:56+00:00",
+      "inbox_cursor": 0
+    },
+    "plan-architect": {
+      "agent_id": "plan-architect",
+      "role": "Action Plan & Architecture Author",
+      "focus": "",
+      "conversation_id": "2d57b488-659c-434d-91fb-318c6595332f",
+      "registered_at": "2026-11-18T19:03:00+00:00",
+      "last_seen": "2026-11-18T19:27:08+00:00",
+      "inbox_cursor": 0
+    },
+    "gallery": {
+      "agent_id": "gallery",
+      "role": "Design Options Explorer Builder",
+      "focus": "Build public/mocks/index.html",
+      "conversation_id": "a97a173c-53b4-45a8-b39f-b3f5d516ff9f",
+      "registered_at": "2026-11-18T19:03:07+00:00",
+      "last_seen": "2026-11-18T19:10:46+00:00",
+      "inbox_cursor": 0
+    },
+    "mock-pantry": {
+      "agent_id": "mock-pantry",
+      "role": "Warm Pantry Mock Builder",
+      "focus": "public/mocks/option-4-warm-editorial/index.html",
+      "conversation_id": "a9af7a38-7c6a-48fc-89f1-9413d49b7e45",
+      "registered_at": "2026-11-18T19:03:22+00:00",
+      "last_seen": "2026-11-18T19:03:22+00:00",
+      "inbox_cursor": 0
+    },
+    "mock-market": {
+      "agent_id": "mock-market",
+      "role": "Airy Marketplace Mock Author",
+      "focus": "public/mocks/option-3-deliveroo-minimal/index.html",
+      "conversation_id": "f38ccb7b-5d69-42e5-86d7-6f1763e4b068",
+      "registered_at": "2026-11-18T19:12:35+00:00",
+      "last_seen": "2026-11-18T19:12:35+00:00",
+      "inbox_cursor": 0
+    },
+    "session-2ea73716": {
+      "agent_id": "session-2ea73716",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "2ea73716-2544-489d-9695-4236a6350f98",
+      "registered_at": "2026-11-18T19:17:29+00:00",
+      "last_seen": "2026-11-18T19:17:29+00:00",
+      "inbox_cursor": 0
+    },
+    "indexer": {
+      "agent_id": "indexer",
+      "role": "O(1) Codebase Context Indexer Author",
+      "focus": "Building harness/codebase_indexer.py and .agents/hub/CODEBASE_MAP.md",
+      "conversation_id": "42d5d4bb-46cd-4e75-a08d-b885fe50a53f",
+      "registered_at": "2026-11-18T19:21:06+00:00",
+      "last_seen": "2026-11-18T20:25:45+00:00",
+      "inbox_cursor": 0
+    },
+    "test-engineer": {
+      "agent_id": "test-engineer",
+      "role": "Test & Schema Guardian",
+      "focus": "",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T19:24:15+00:00",
+      "last_seen": "2026-11-18T20:06:02+00:00",
+      "inbox_cursor": 0
+    },
+    "session-3e4c7e07": {
+      "agent_id": "session-3e4c7e07",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "3e4c7e07-fbb6-4729-9df2-21be8d6e7376",
+      "registered_at": "2026-11-18T19:25:35+00:00",
+      "last_seen": "2026-11-18T19:25:35+00:00",
+      "inbox_cursor": 0
+    },
+    "session-206cda1d": {
+      "agent_id": "session-206cda1d",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "206cda1d-07df-4fc3-b8dc-d3a552e129f3",
+      "registered_at": "2026-11-18T19:25:46+00:00",
+      "last_seen": "2026-11-18T19:25:46+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a57a9924": {
+      "agent_id": "session-a57a9924",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a57a9924-bfea-4193-a33a-1f7b44a7541a",
+      "registered_at": "2026-11-18T19:25:47+00:00",
+      "last_seen": "2026-11-18T19:25:47+00:00",
+      "inbox_cursor": 0
+    },
+    "session-06b33142": {
+      "agent_id": "session-06b33142",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "06b33142-4004-4a3b-8a1c-306c03285be9",
+      "registered_at": "2026-11-18T19:25:47+00:00",
+      "last_seen": "2026-11-18T19:25:47+00:00",
+      "inbox_cursor": 0
+    },
+    "session-9c74b1ce": {
+      "agent_id": "session-9c74b1ce",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "9c74b1ce-01f6-40e9-939b-4ebfd4267c81",
+      "registered_at": "2026-11-18T19:25:47+00:00",
+      "last_seen": "2026-11-18T19:25:47+00:00",
+      "inbox_cursor": 0
+    },
+    "session-d7eab580": {
+      "agent_id": "session-d7eab580",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "d7eab580-ef07-4781-9d14-ae546c90e965",
+      "registered_at": "2026-11-18T19:25:48+00:00",
+      "last_seen": "2026-11-18T19:25:48+00:00",
+      "inbox_cursor": 0
+    },
+    "session-36e71161": {
+      "agent_id": "session-36e71161",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "36e71161-c8ef-44a4-ab17-d95cbbd495b7",
+      "registered_at": "2026-11-18T19:25:48+00:00",
+      "last_seen": "2026-11-18T19:36:56+00:00",
+      "inbox_cursor": 0
+    },
+    "session-30a8826a": {
+      "agent_id": "session-30a8826a",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "30a8826a-51b9-4eca-845c-5ae6689f9a02",
+      "registered_at": "2026-11-18T19:25:49+00:00",
+      "last_seen": "2026-11-18T19:25:49+00:00",
+      "inbox_cursor": 0
+    },
+    "session-ff97debb": {
+      "agent_id": "session-ff97debb",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "ff97debb-613d-4cf2-8576-30f6f4e8f261",
+      "registered_at": "2026-11-18T19:25:49+00:00",
+      "last_seen": "2026-11-18T19:25:49+00:00",
+      "inbox_cursor": 0
+    },
+    "session-2be5cfa8": {
+      "agent_id": "session-2be5cfa8",
+      "role": "agent",
+      "focus": "",
+      "conversation_id": "2be5cfa8-7165-44a5-af37-90eef156e1bf",
+      "registered_at": "2026-11-18T19:25:56+00:00",
+      "last_seen": "2026-11-18T19:31:35+00:00",
+      "inbox_cursor": 0
+    },
+    "legal": {
+      "agent_id": "legal",
+      "role": "UK Legal & Compliance Author",
+      "focus": "",
+      "conversation_id": "a57a9924-bfea-4193-a33a-1f7b44a7541a",
+      "registered_at": "2026-11-18T19:26:00+00:00",
+      "last_seen": "2026-11-18T19:58:44+00:00",
+      "inbox_cursor": 0
+    },
+    "economics": {
+      "agent_id": "economics",
+      "role": "Unit Economics Author",
+      "focus": "",
+      "conversation_id": "206cda1d-07df-4fc3-b8dc-d3a552e129f3",
+      "registered_at": "2026-11-18T19:26:02+00:00",
+      "last_seen": "2026-11-18T19:55:10+00:00",
+      "inbox_cursor": 0
+    },
+    "editor": {
+      "agent_id": "editor",
+      "role": "Editor-in-Chief",
+      "focus": "",
+      "conversation_id": "ff97debb-613d-4cf2-8576-30f6f4e8f261",
+      "registered_at": "2026-11-18T19:26:04+00:00",
+      "last_seen": "2026-11-18T21:54:49+00:00",
+      "inbox_cursor": 0
+    },
+    "operations": {
+      "agent_id": "operations",
+      "role": "Supply Chain & Drop Ops Author",
+      "focus": "",
+      "conversation_id": "06b33142-4004-4a3b-8a1c-306c03285be9",
+      "registered_at": "2026-11-18T19:27:02+00:00",
+      "last_seen": "2026-11-18T20:16:07+00:00",
+      "inbox_cursor": 0
+    },
+    "growth": {
+      "agent_id": "growth",
+      "role": "UoB GTM & Pitching Author",
+      "focus": "",
+      "conversation_id": "9c74b1ce-01f6-40e9-939b-4ebfd4267c81",
+      "registered_at": "2026-11-18T19:27:34+00:00",
+      "last_seen": "2026-11-18T22:01:01+00:00",
+      "inbox_cursor": 0
+    },
+    "execution": {
+      "agent_id": "execution",
+      "role": "Launch Roadmap & Tech Transition Author",
+      "focus": "",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T19:27:38+00:00",
+      "last_seen": "2026-11-18T19:54:49+00:00",
+      "inbox_cursor": 0
+    },
+    "ui-refactor": {
+      "agent_id": "ui-refactor",
+      "role": "Component Architecture & Resilience Engineer",
+      "focus": "",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T19:34:29+00:00",
+      "last_seen": "2026-11-18T19:57:03+00:00",
+      "inbox_cursor": 0
+    },
+    "session-79f15fec": {
+      "agent_id": "session-79f15fec",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "79f15fec-0b5b-40b9-bee6-974e90a9036d",
+      "registered_at": "2026-11-18T19:34:38+00:00",
+      "last_seen": "2026-11-18T19:47:12+00:00",
+      "inbox_cursor": 0
+    },
+    "session-52f279f9": {
+      "agent_id": "session-52f279f9",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "52f279f9-ce37-42b9-a26f-b8bc31d69542",
+      "registered_at": "2026-11-18T19:34:38+00:00",
+      "last_seen": "2026-11-18T19:34:38+00:00",
+      "inbox_cursor": 0
+    },
+    "session-b008d324": {
+      "agent_id": "session-b008d324",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "b008d324-03d1-4a1d-a7bf-acda2a078904",
+      "registered_at": "2026-11-18T19:34:38+00:00",
+      "last_seen": "2026-11-18T19:34:38+00:00",
+      "inbox_cursor": 0
+    },
+    "session-89041c3d": {
+      "agent_id": "session-89041c3d",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "89041c3d-84e8-4c61-b2fd-3657a97c1e3f",
+      "registered_at": "2026-11-18T19:34:39+00:00",
+      "last_seen": "2026-11-18T19:34:39+00:00",
+      "inbox_cursor": 0
+    },
+    "session-85b5969c": {
+      "agent_id": "session-85b5969c",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "85b5969c-2f67-49d6-b781-2e9b156d26bd",
+      "registered_at": "2026-11-18T19:34:39+00:00",
+      "last_seen": "2026-11-18T19:34:39+00:00",
+      "inbox_cursor": 0
+    },
+    "session-5cb7db6e": {
+      "agent_id": "session-5cb7db6e",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "5cb7db6e-a613-405d-adcf-60b6e9f4fab6",
+      "registered_at": "2026-11-18T19:34:39+00:00",
+      "last_seen": "2026-11-18T19:34:39+00:00",
+      "inbox_cursor": 0
+    },
+    "session-a20cc695": {
+      "agent_id": "session-a20cc695",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "a20cc695-737e-4caa-b82d-4f230a771519",
+      "registered_at": "2026-11-18T19:34:39+00:00",
+      "last_seen": "2026-11-18T19:34:39+00:00",
+      "inbox_cursor": 0
+    },
+    "session-ffd5f0bf": {
+      "agent_id": "session-ffd5f0bf",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "ffd5f0bf-bbdd-4c5d-8958-e92c2733e654",
+      "registered_at": "2026-11-18T19:34:39+00:00",
+      "last_seen": "2026-11-18T19:34:39+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-crest": {
+      "agent_id": "logo-crest",
+      "role": "Logo Designer 05",
+      "focus": "Concept 05 Campus Citrus-Crate Co-op Stamp",
+      "conversation_id": "89041c3d-84e8-4c61-b2fd-3657a97c1e3f",
+      "registered_at": "2026-11-18T19:34:49+00:00",
+      "last_seen": "2026-11-18T19:51:23+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-monogram": {
+      "agent_id": "logo-monogram",
+      "role": "Logo Designer 04",
+      "focus": "Concept 04 Modular S-Box Monogram",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T19:34:49+00:00",
+      "last_seen": "2026-11-18T19:34:49+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-meter": {
+      "agent_id": "logo-meter",
+      "role": "Logo Designer 01",
+      "focus": "Concept 01 Radial SliceMeter Seal",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T19:34:49+00:00",
+      "last_seen": "2026-11-18T19:48:05+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-ticket": {
+      "agent_id": "logo-ticket",
+      "role": "Logo Designer 03",
+      "focus": "Concept 03 Perforated Drop Ticket",
+      "conversation_id": "b008d324-03d1-4a1d-a7bf-acda2a078904",
+      "registered_at": "2026-11-18T19:34:52+00:00",
+      "last_seen": "2026-11-18T19:50:39+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-studio": {
+      "agent_id": "logo-studio",
+      "role": "Brand Showcase & Renderer",
+      "focus": "Offline Logo Studio HTML + PNG Rasterizer",
+      "conversation_id": "85b5969c-2f67-49d6-b781-2e9b156d26bd",
+      "registered_at": "2026-11-18T19:34:53+00:00",
+      "last_seen": "2026-11-18T19:59:55+00:00",
+      "inbox_cursor": 0
+    },
+    "logo-crate": {
+      "agent_id": "logo-crate",
+      "role": "Logo Designer 02",
+      "focus": "Concept 02 Isometric Split-Crate",
+      "conversation_id": "52f279f9-ce37-42b9-a26f-b8bc31d69542",
+      "registered_at": "2026-11-18T19:35:09+00:00",
+      "last_seen": "2026-11-18T20:24:38+00:00",
+      "inbox_cursor": 0
+    },
+    "session-0e6855a4": {
+      "agent_id": "session-0e6855a4",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "0e6855a4-69a2-4aad-8436-d9effe32b301",
+      "registered_at": "2026-11-18T19:41:47+00:00",
+      "last_seen": "2026-11-18T19:41:47+00:00",
+      "inbox_cursor": 0
+    },
+    "session-6015aa51": {
+      "agent_id": "session-6015aa51",
+      "role": "agent",
+      "focus": "",
+      "conversation_id": "6015aa51-8c20-4759-ab46-8864c97b338d",
+      "registered_at": "2026-11-18T19:47:18+00:00",
+      "last_seen": "2026-11-18T19:47:18+00:00",
+      "inbox_cursor": 0
+    },
+    "session-b1ea6304": {
+      "agent_id": "session-b1ea6304",
+      "role": "agent",
+      "focus": "",
+      "conversation_id": "b1ea6304-99e7-458f-8fc4-2371f394dd7b",
+      "registered_at": "2026-11-18T19:54:47+00:00",
+      "last_seen": "2026-11-18T19:54:47+00:00",
+      "inbox_cursor": 0
+    },
+    "session-b2088d33": {
+      "agent_id": "session-b2088d33",
+      "role": "agent",
+      "focus": "",
+      "conversation_id": "b2088d33-f2be-4306-9e61-f65d278d6bae",
+      "registered_at": "2026-11-18T19:55:44+00:00",
+      "last_seen": "2026-11-18T19:55:44+00:00",
+      "inbox_cursor": 0
+    },
+    "session-09f97afe": {
+      "agent_id": "session-09f97afe",
+      "role": "agent",
+      "focus": "",
+      "conversation_id": "09f97afe-99b4-4b5e-8c15-6efe367f4ded",
+      "registered_at": "2026-11-18T20:03:11+00:00",
+      "last_seen": "2026-11-18T20:03:11+00:00",
+      "inbox_cursor": 0
+    },
+    "unifier": {
+      "agent_id": "unifier",
+      "role": "Single-Source-of-Truth Unifier",
+      "focus": "Unifying PalletCut brand, 1 active launch hub, £0.39/<£9 crate fee, and hub locks",
+      "conversation_id": "0e6855a4-69a2-4aad-8436-d9effe32b301",
+      "registered_at": "2026-11-18T20:03:20+00:00",
+      "last_seen": "2026-11-18T21:48:15+00:00",
+      "inbox_cursor": 0
+    },
+    "arch-auditor": {
+      "agent_id": "arch-auditor",
+      "role": "Architecture & Code Quality Auditor",
+      "focus": "",
+      "conversation_id": "",
+      "registered_at": "2026-11-18T20:23:35+00:00",
+      "last_seen": "2026-11-18T20:24:41+00:00",
+      "inbox_cursor": 0
+    },
+    "session-81a2ba24": {
+      "agent_id": "session-81a2ba24",
+      "role": "Antigravity Session",
+      "focus": "Active conversation session",
+      "conversation_id": "81a2ba24-4787-47a5-966a-fb2ffdf9805b",
+      "registered_at": "2026-11-18T21:08:39+00:00",
+      "last_seen": "2026-11-18T21:50:21+00:00",
+      "inbox_cursor": 0
+    }
+  }
+}

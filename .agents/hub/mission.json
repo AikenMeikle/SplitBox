@@ -1,0 +1,74 @@
+{
+  "project": "PalletCut (SplitBox)",
+  "title": "Deliver & maintain PalletCut (SplitBox) — Dual-Mode UoB bulk-grocery & household-essentials pooling web app",
+  "summary": "Deliver & maintain PalletCut (formerly SplitBox) — Dual-Mode (zero-config offline Demo Mode + Supabase/Stripe Live Mode) tactile light-mode UoB bulk-grocery & household-essentials pooling web app (1 active launch hub Vale · Shackleton + 3 coming_soon vote hubs, £ GBP integer-pence sequential FCFS case allocation, £0.00 crate fee >= £9.00 / £0.39 < £9.00, Card Pre-Authorisation Hold cutoff settlement, SVG QR + 4-digit PIN pickup pass, and 375px mobile layout).",
+  "invariants": [
+    "Zero External Asset CDNs (Both Modes): Self-hosted @fontsource fonts, local palletcut-*.svg assets, and local qrcode.react SVG; Demo Mode runs 100% offline via localStorage.",
+    "UoB Drop #1 Hub & GBP (£) Fee Rules: 1 active launch hub (Vale · Shackleton; 3 other UoB hubs as coming_soon votes), £0.00 fee >= £9.00 (£0.39 micro-crate fee < £9.00), Card Pre-Authorisation Hold copy.",
+    "Chronological Sequential Case Allocation: Strictly first-come-first-served across Box #1, Box #2, ... with <100% overflow slices auto-released at Wednesday 23:59 cutoff.",
+    "Tactile Citrus-Crate Craft (Kept for Launch): #F7FAF8 light canvas, 1.5px–2px #0B241C borders, 3px 3px 0px #0B241C hard shadows, radial SVG <SliceMeter /> only, #0B241C ink on #10D48E mint & #FF6B1A tangerine."
+  ],
+  "acceptance_gates": [
+    {
+      "id": "gate-1-build",
+      "title": "Clean TypeScript & Vite Build",
+      "criteria": "tsc -b && vite build exits 0 with zero TypeScript or bundler errors.",
+      "status": "done"
+    },
+    {
+      "id": "gate-2-offline",
+      "title": "Zero External Network / CDN Calls",
+      "criteria": "0 external http(s) requests on load and checkout/cutoff flows; local @fontsource, SVGs, and £ GBP copy.",
+      "status": "done"
+    },
+    {
+      "id": "gate-3-allocation",
+      "title": "3/4 + 2 Cross-Box Allocation & Auto-Refund",
+      "criteria": "Ordering 2 slices at 3/4 records Box #1 (4/4 Locked) + Box #2 (1/4 Pooling -> Auto-Refunded on Trigger Cutoff) with localStorage persistence.",
+      "status": "done"
+    },
+    {
+      "id": "gate-4-pickup-pass",
+      "title": "QR + 4-Digit PIN Net £ Receipt & Reset",
+      "criteria": "Post-cutoff Orders/Pickup Pass displays fulfilled vs. auto-refunded slices, net £ charged total, SVG QR + 4-digit PIN, and working Reset.",
+      "status": "done"
+    },
+    {
+      "id": "gate-5-mobile-375",
+      "title": "375px Zero-Overflow Mobile Layout",
+      "criteria": "At 375px x 812px viewport, single-column catalog grid with scrollWidth <= 375 and sticky bottom basket bar.",
+      "status": "done"
+    }
+  ],
+  "milestones": [
+    {
+      "id": "m1-drop-engine",
+      "title": "GBP Drop Engine, Sequential Allocator & UK Campus Catalog",
+      "status": "done",
+      "owner": "foundation",
+      "note": "src/types.ts, src/data/catalog.ts, src/store/dropEngine.ts, src/store/DropContext.tsx"
+    },
+    {
+      "id": "m2-ui-slices",
+      "title": "Storefront, Basket, Orders/Pickup Pass, Hub Ops & Investor Views",
+      "status": "done",
+      "owner": "ui-builders",
+      "note": "Tactile crate UI + radial SVG <SliceMeter /> + Demo Controls integrated in src/App.tsx"
+    },
+    {
+      "id": "m3-qa-gate",
+      "title": "5-Gate Offline, GBP & 375px Build Verification",
+      "status": "done",
+      "owner": "splitbox-qa",
+      "note": "verify_offline_and_build.sh passing cleanly"
+    },
+    {
+      "id": "m4-agent-hub",
+      "title": "Multi-Agent Communication Bus, O(1) Codebase Indexer & Lifecycle Hooks",
+      "status": "done",
+      "owner": "swarm",
+      "note": "Eliminate cold-start scanning and coordinate file locks + handoffs across agents"
+    }
+  ],
+  "updated_at": "2026-11-18T20:16:23+00:00"
+}

@@ -1,43 +1,22 @@
 @import "tailwindcss";
 
+/*
+ * Divly Clean Modern Grocery Design System
+ * Inspired by Ocado, Tesco & Deliveroo: crisp white surfaces, subtle 1px gray
+ * borders, soft elevation shadows, and fresh grocery emerald (#059669) accents.
+ */
+
 :root {
-  /* Surfaces */
-  --sb-bg-canvas: #F7FAF8;
-  --sb-bg-surface: #FFFFFF;
-  --sb-bg-mint-tint: #EDF7F2;
-  --sb-bg-cobalt-tint: #EEF2FF;
-
-  /* Ink & Borders */
-  --sb-ink-primary: #0B241C;
-  --sb-ink-secondary: #4A665C;
-  --sb-border-subtle: #CBE0D6;
-
-  /* Brand Accents */
-  --sb-mint-500: #10D48E;
-  --sb-mint-700: #087F53;
-  --sb-tangerine-500: #FF6B1A;
-  --sb-tangerine-600: #E05206;
-  --sb-cobalt-600: #1849D6;
-  --sb-warning-500: #F59E0B;
-  --sb-danger-600: #E11D48;
-
-  /* Typography */
-  --sb-font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
-  --sb-font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  --sb-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-
-  /* Radii & Tactile Framing (Zero Blur) */
-  --sb-radius-box: 16px;
-  --sb-radius-control: 10px;
-  --sb-radius-pill: 6px;
-  --sb-border-strong: 2px solid var(--sb-ink-primary);
-  --sb-border-regular: 1.5px solid var(--sb-ink-primary);
-  --sb-shadow-crate: 3px 3px 0px var(--sb-ink-primary);
-  --sb-shadow-crate-hover: 5px 5px 0px var(--sb-ink-primary);
-  --sb-shadow-crate-active: 1px 1px 0px var(--sb-ink-primary);
-
-  /* Layout */
-  --sb-max-width: 1280px;
+  --divly-bg: #F9FAFB;
+  --divly-surface: #FFFFFF;
+  --divly-border: #E5E7EB;
+  --divly-text: #111827;
+  --divly-text-muted: #4B5563;
+  --divly-emerald: #059669;
+  --divly-emerald-hover: #047857;
+  --divly-emerald-soft: #ECFDF5;
+  --divly-font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --divly-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 *,
@@ -50,387 +29,149 @@ html,
 body {
   margin: 0;
   padding: 0;
-  max-width: 100%;
   overflow-x: clip;
-  background-color: var(--sb-bg-canvas);
-  color: var(--sb-ink-primary);
-  font-family: var(--sb-font-sans);
+  background-color: var(--divly-bg);
+  color: var(--divly-text);
+  font-family: var(--divly-font-sans);
   font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-#root {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
-/* Exposed Crate-Grid Texture */
-.sb-crate-grid-bg {
-  background-color: var(--sb-bg-canvas);
-  background-image:
-    linear-gradient(to right, rgba(11, 36, 28, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(11, 36, 28, 0.05) 1px, transparent 1px);
-  background-size: 32px 32px;
-}
-
-/* Page Container & Responsive Catalog Grid */
-.sb-container {
-  width: 100%;
-  max-width: var(--sb-max-width);
-  margin: 0 auto;
-  padding: 0 24px;
-}
-
-.sb-catalog-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  gap: 20px;
-}
-
-@media (max-width: 640px) {
-  .sb-container {
-    padding: 0 16px;
-  }
-
-  .sb-catalog-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-}
-
-/* Typography Helpers */
-.sb-h1 {
-  font-family: var(--sb-font-display);
-  font-size: clamp(2.125rem, 4vw, 3.5rem);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-  margin: 0;
-  color: var(--sb-ink-primary);
-}
-
-.sb-h2 {
-  font-family: var(--sb-font-display);
-  font-size: clamp(1.5rem, 2.5vw, 2.125rem);
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.025em;
-  margin: 0;
-  color: var(--sb-ink-primary);
-}
-
-.sb-mono {
-  font-family: var(--sb-font-mono);
+.tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* Price-Gun Badges & Status Pills */
-.sb-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--sb-font-mono);
+.font-mono-code {
+  font-family: var(--divly-font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 4px 8px;
-  border-radius: var(--sb-radius-pill);
-  border: var(--sb-border-regular);
-  white-space: nowrap;
-  max-width: 100%;
 }
 
-/* Strict Contrast: #0B241C ink on #10D48E mint */
-.sb-badge--mint {
-  background-color: var(--sb-mint-500);
-  color: var(--sb-ink-primary);
+/* Clean supermarket card */
+.card {
+  background-color: var(--divly-surface);
+  border: 1px solid var(--divly-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-.sb-badge--cobalt {
-  background-color: var(--sb-bg-cobalt-tint);
-  color: var(--sb-cobalt-600);
-}
-
-/* Strict Contrast: #FFFFFF text on #1849D6 cobalt */
-.sb-badge--cobalt-solid {
-  background-color: var(--sb-cobalt-600);
-  color: #FFFFFF;
-}
-
-/* Strict Contrast: #0B241C ink on #FF6B1A tangerine */
-.sb-badge--tangerine {
-  background-color: var(--sb-tangerine-500);
-  color: var(--sb-ink-primary);
-}
-
-/* Amber closing-soon / grace warning: #0B241C ink on #F59E0B */
-.sb-badge--warning {
-  background-color: var(--sb-warning-500);
-  color: var(--sb-ink-primary);
-}
-
-/* Danger / auto-refund / missed pickup */
-.sb-badge--danger {
-  background-color: #FFE4E6;
-  color: var(--sb-danger-600);
-}
-
-.sb-badge--ink {
-  background-color: var(--sb-ink-primary);
-  color: #FFFFFF;
-}
-
-/* Tactile Buttons (Zero-Blur Crate Shadows) */
-.sb-btn {
+/* Primary emerald grocery button */
+.btn-primary {
   display: inline-flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
-  font-family: var(--sb-font-display);
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1.2;
-  border-radius: var(--sb-radius-control);
-  border: var(--sb-border-strong);
-  box-shadow: 2px 2px 0px var(--sb-ink-primary);
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  border: 1px solid transparent;
+  background-color: var(--divly-emerald);
+  color: #FFFFFF;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
   cursor: pointer;
-  text-decoration: none;
-  transition: transform 100ms ease, box-shadow 100ms ease, background-color 120ms ease;
+  box-shadow: 0 1px 2px rgba(5, 150, 105, 0.16);
+  transition: background-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
 }
 
-.sb-btn:disabled {
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--divly-emerald-hover);
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--divly-emerald);
+  outline-offset: 2px;
+}
+
+.btn-primary:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-  transform: none !important;
-  box-shadow: 2px 2px 0px var(--sb-ink-primary) !important;
 }
 
-.sb-btn--full {
-  width: 100%;
-}
-
-.sb-btn--sm {
-  padding: 8px 14px;
+/* Secondary crisp white button */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.625rem;
+  border: 1px solid #D1D5DB;
+  background-color: #FFFFFF;
+  color: #1F2937;
   font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
-/* Strict Contrast: #0B241C ink on #FF6B1A tangerine */
-.sb-btn--primary {
-  background-color: var(--sb-tangerine-500);
-  color: var(--sb-ink-primary);
+.btn-secondary:hover:not(:disabled) {
+  background-color: #F9FAFB;
+  border-color: #9CA3AF;
 }
 
-.sb-btn--primary:hover:not(:disabled) {
-  background-color: #FF7E38;
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0px var(--sb-ink-primary);
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--divly-emerald);
+  outline-offset: 2px;
 }
 
-.sb-btn--primary:active:not(:disabled) {
-  background-color: var(--sb-tangerine-600);
-  transform: translate(1px, 1px);
-  box-shadow: var(--sb-shadow-crate-active);
+.btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
-.sb-btn--secondary {
-  background-color: var(--sb-bg-surface);
-  color: var(--sb-ink-primary);
-}
-
-.sb-btn--secondary:hover:not(:disabled) {
-  background-color: var(--sb-bg-mint-tint);
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0px var(--sb-ink-primary);
-}
-
-.sb-btn--secondary:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: var(--sb-shadow-crate-active);
-}
-
-/* Strict Contrast: #FFFFFF text on #1849D6 cobalt */
-.sb-btn--cobalt {
-  background-color: var(--sb-cobalt-600);
-  color: #FFFFFF;
-}
-
-.sb-btn--cobalt:hover:not(:disabled) {
-  background-color: #1D4ED8;
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0px var(--sb-ink-primary);
-}
-
-.sb-btn--cobalt:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: var(--sb-shadow-crate-active);
-}
-
-/* Strict Contrast: #0B241C ink on #10D48E mint */
-.sb-btn--mint {
-  background-color: var(--sb-mint-500);
-  color: var(--sb-ink-primary);
-}
-
-.sb-btn--mint:hover:not(:disabled) {
-  background-color: #2CE09D;
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0px var(--sb-ink-primary);
-}
-
-.sb-btn--mint:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: var(--sb-shadow-crate-active);
-}
-
-/* Strict Contrast: #FFFFFF text on #0B241C ink */
-.sb-btn--ink {
-  background-color: var(--sb-ink-primary);
-  color: #FFFFFF;
-}
-
-.sb-btn--ink:hover:not(:disabled) {
-  background-color: #153A2E;
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0px var(--sb-ink-primary);
-}
-
-.sb-btn--ink:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: var(--sb-shadow-crate-active);
-}
-
-.sb-btn__mono {
-  font-family: var(--sb-font-mono);
-  font-variant-numeric: tabular-nums;
+/* Semantic grocery pill badges */
+.badge-green {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  background-color: #ECFDF5;
+  color: #047857;
+  border: 1px solid #A7F3D0;
+  font-size: 0.75rem;
   font-weight: 700;
-  font-size: 0.875rem;
-  background: rgba(255, 255, 255, 0.45);
-  color: var(--sb-ink-primary);
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--sb-ink-primary);
+  line-height: 1.125rem;
   white-space: nowrap;
 }
 
-/* Split Card Component */
-.sb-card {
-  background: var(--sb-bg-surface);
-  border: var(--sb-border-strong);
-  border-radius: var(--sb-radius-box);
-  box-shadow: var(--sb-shadow-crate);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  transition: transform 140ms ease, box-shadow 140ms ease;
-}
-
-.sb-card:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: var(--sb-shadow-crate-hover);
-}
-
-.sb-card--static:hover {
-  transform: none;
-  box-shadow: var(--sb-shadow-crate);
-}
-
-.sb-card__header {
-  display: flex;
-  justify-content: space-between;
+.badge-amber {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sb-card__body {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.sb-card__info {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.sb-card__meter {
-  flex: 0 0 auto;
-}
-
-.sb-card__title {
-  font-family: var(--sb-font-display);
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  line-height: 1.2;
-  margin: 0 0 4px 0;
-  color: var(--sb-ink-primary);
-}
-
-.sb-card__subtitle {
-  font-size: 0.875rem;
-  color: var(--sb-ink-secondary);
-  margin: 0;
-  line-height: 1.4;
-}
-
-.sb-card__footer {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Perforated Wholesale Receipt Block */
-.sb-card__receipt {
-  background: var(--sb-bg-mint-tint);
-  border: 1.5px dashed var(--sb-ink-primary);
-  border-radius: var(--sb-radius-control);
-  padding: 12px 14px;
-  font-family: var(--sb-font-mono);
-  font-variant-numeric: tabular-nums;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sb-receipt-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 0.78rem;
-  color: var(--sb-ink-secondary);
-}
-
-.sb-receipt-row--highlight {
-  color: var(--sb-ink-primary);
-  font-weight: 700;
-  padding: 4px 0;
-  border-top: 1px dashed var(--sb-border-subtle);
-  border-bottom: 1px dashed var(--sb-border-subtle);
-}
-
-.sb-receipt-value--strike {
-  text-decoration: line-through;
-}
-
-.sb-receipt-price {
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--sb-ink-primary);
-}
-
-.sb-card__escrow-note {
-  margin: 8px 0 0 0;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  background-color: #FFFBEB;
+  color: #B45309;
+  border: 1px solid #FDE68A;
   font-size: 0.75rem;
-  color: var(--sb-ink-secondary);
-  line-height: 1.35;
+  font-weight: 600;
+  line-height: 1.125rem;
+  white-space: nowrap;
+}
+
+.badge-slate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 9999px;
+  background-color: #F3F4F6;
+  color: #374151;
+  border: 1px solid #E5E7EB;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.125rem;
+  white-space: nowrap;
 }

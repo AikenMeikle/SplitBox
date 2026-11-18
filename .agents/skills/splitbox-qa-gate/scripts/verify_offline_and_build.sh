@@ -29,12 +29,12 @@ if [ -d src ]; then
 fi
 echo "PASS: GBP (£) currency check clean."
 
-echo "=== [3/4] Checking bundled SplitBox brand assets ==="
-if [ ! -f public/assets/splitbox-icon.svg ] && [ ! -f src/assets/splitbox-icon.svg ]; then
-  echo "WARN: splitbox-icon.svg not yet copied into public/assets/ or src/assets/."
+echo "=== [3/4] Checking bundled PalletCut / SplitBox brand assets ==="
+if [ ! -f public/assets/palletcut-icon.svg ] && [ ! -f public/assets/splitbox-icon.svg ]; then
+  echo "WARN: palletcut-icon.svg not yet copied into public/assets/."
   exit 1
 fi
-echo "PASS: SplitBox SVG brand assets bundled locally."
+echo "PASS: PalletCut SVG brand assets bundled locally."
 
 echo "=== [4/4] Running production TypeScript + Vite build ==="
 npm run build

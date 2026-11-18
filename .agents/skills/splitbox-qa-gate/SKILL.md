@@ -1,36 +1,41 @@
 ---
 name: splitbox-qa-gate
-description: Run this before marking any UI, state, or integration task complete, before finishing a build, or before telling the user a SplitBox change works.
+description: >-
+  Fast automated asset-CDN & GBP currency verification, TypeScript + Vite build
+  gate, Dual-Mode (Demo vs Live Supabase/Stripe) verification rules, and SplitBox
+  acceptance checklist. MUST read and run before completing integration or QA.
 ---
 
-# SplitBox Offline, Currency & Build Verification (`splitbox-qa-gate`)
+# SplitBox QA & Acceptance Gate Skill
 
-## 1. Run the Automated Offline & Build Gate
+Use this skill in the integration/QA phase (or after editing components) to guarantee all acceptance gates in [docs/product/mvp-spec.md](../../../docs/product/mvp-spec.md) and visual rules in [docs/design/brand-and-ui.md](../../../docs/design/brand-and-ui.md) pass cleanly.
 
-Execute the project verification script from the workspace root:
+## 1. Run Automated Verification Script First
+
+Execute [scripts/verify_offline_and_build.sh](./scripts/verify_offline_and_build.sh) from the workspace root:
 
 ```bash
 bash .agents/skills/splitbox-qa-gate/scripts/verify_offline_and_build.sh
 ```
 
-Every check in the script must pass with exit code `0`:
-1. **Zero External Runtime Network Calls:** Scans `index.html` and `src/` to block forbidden `http(s)://` links (such as `fonts.googleapis.com`, remote image CDNs, or external QR APIs).
-2. **GBP (`£`) Currency Hygiene:** Scans `src/` to reject any stray USD (`$X.XX`) price literals carried over from generic style snippets.
-3. **Bundled Local Assets:** Verifies `splitbox-icon.svg` is present in `public/assets/` or `src/assets/`.
-4. **Production TypeScript & Vite Build:** Runs `npm run build` (`tsc -b && vite build`) with zero compilation or bundling errors.
+What this script checks automatically:
+1. **Zero Forbidden External Runtime Asset URLs:** Scans `index.html` and `src/` for hardcoded external `https://` or `http://` links (blocking Google Fonts links, Unsplash/Pexels stock URLs, and external QR image APIs while ignoring standard `w3.org` SVG XML namespaces and `localhost`).
+2. **GBP (`£`) Currency Hygiene:** Scans `src/` for stray USD `$` price literals (e.g., `$6.90`).
+3. **Local Brand Assets:** Confirms `public/assets/splitbox-icon.svg` (or `src/assets/splitbox-icon.svg`) exists locally so navbar and pass marks never 404.
+4. **Clean Production Build:** Runs `npm run build` (`tsc -b && vite build`) and fails on any TypeScript or bundler error.
 
-## 2. Start Local Dev Server & Verify HTTP 200
+### Dual-Mode Verification (`VITE_DEMO_MODE` vs Live Supabase / Stripe)
+- **Current Build & Demo Mode (`VITE_DEMO_MODE=true` or no `.env` keys):** `verify_offline_and_build.sh` passes out-of-the-box with zero external URLs in `index.html` / `src/`, and `npm run dev` boots completely offline with `0` non-localhost network requests.
+- **Live Production Mode (`Supabase` + `Stripe` + `Resend`):**
+  - Inject runtime endpoints via environment variables (`import.meta.env.VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_STRIPE_PUBLISHABLE_KEY`) rather than hardcoding `https://` URLs in `src/`.
+  - If official SDK endpoints (`*.supabase.co`, `js.stripe.com`, `api.stripe.com`) are referenced in Live adapter modules, only allowlist `\.supabase\.co|js\.stripe\.com|api\.stripe\.com` in `verify_offline_and_build.sh`'s `grep -Ev` filter—external font, image, and QR CDNs remain **strictly forbidden** in both modes, and `VITE_DEMO_MODE=true` must continue to pass with `0` external runtime requests.
 
-1. Start the Vite dev server in the background: `npm run dev`
-2. Verify the local storefront and bundled SVG assets return `HTTP 200`:
-   ```bash
-   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173/
-   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173/assets/splitbox-icon.svg
-   ```
+## 2. 60-Second Functional & Visual Audit Checklist
 
-## 3. Functional Acceptance Smoke Check
+Verify each gate in code (and on `localhost` via `npm run dev`):
 
-Confirm these three SplitBox invariants hold before handoff:
-- **Cross-Box Boundary Split (`3/4 + 2`):** Claiming `2` slices on a `3/4` pool assigns Slice 1 to `Box #1 (4/4 Locked)` and Slice 2 to `Box #2 (1/4 Pooling)` in `localStorage`.
-- **Cutoff Partial Auto-Refund & Pass:** Triggering **Drop Cutoff** in Demo Controls marks `100%` boxes *Fulfilled*, marks `<100%` overflow slices *Auto-Refunded* (subtracted from the final charged `£` total), and renders a local `<QRCodeSVG />` + 4-digit PIN.
-- **`375px` Mobile Layout:** Catalog stacks in a single column (`1fr`) with zero horizontal overflow and a sticky bottom basket bar.
+- [ ] **Gate #1 — Storefront & UoB Drop Rules:** App boots cleanly in Demo Mode without a login wall (and enforces `@student.bham.ac.uk` Magic Link in Live Mode), displays UoB hub selector (`Vale · Shackleton` launch hub), countdown, category + *"Almost Full (1–2 Left)"* filters, and sealed UK FIR-compliant ambient items in `£` with `<SliceMeter />` radial SVG dials and dashed wholesale receipt blocks.
+- [ ] **Gate #2 — Sequential Case-Boundary Split (`3/4 + 2` Test):** Ordering `2` slices of an item at `3/4` assigns Slice 1 to `Box #1 (4/4 Locked)` and Slice 2 to `Box #2 (1/4 Pooling)` (persisting across reloads via `localStorage` in Demo Mode or Postgres `SELECT ... FOR UPDATE` in Live Mode).
+- [ ] **Gate #3 — Cutoff Settlement & Partial Auto-Release:** Full `100%` boxes transition to *Fulfilled* while `<100%` overflow slices transition to *Auto-Refunded / Released* (`£0.00` captured on unfulfilled slices without cancelling fulfilled items in the same order), rendering a local `<QRCodeSVG />` + **4-digit PIN** when `fulfilledSliceCount > 0`.
+- [ ] **Gate #4 — `375px` Mobile Layout:** At `375px` width, `.sb-catalog-grid` stacks in `1` column with zero horizontal overflow (`scrollWidth <= 375`), and the sticky bottom bar opens the Basket Drawer cleanly.
+- [ ] **Gate #5 — Contrast & Tactile Crate Craft:** `#0B241C` ink text on `#10D48E` mint and `#FF6B1A` tangerine (`#FFFFFF` text only on `#1849D6` cobalt and `#0B241C` ink); hard `1.5px–2px solid #0B241C` borders + zero-blur offset crate shadows (`3px 3px 0px #0B241C`).

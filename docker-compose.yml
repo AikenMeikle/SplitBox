@@ -1,0 +1,28 @@
+# ==============================================================================
+# Divly Docker Compose — Ideal for Home Proxmox VM, VPS, or Local Prod Testing
+# Run with:
+#   cp .env.example .env   # edit ADMIN_PIN & QR_HMAC_SECRET!
+#   docker compose up -d --build
+# ==============================================================================
+services:
+  divly:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: divly-uob
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SQLITE_PATH: /app/data/divly.sqlite
+    volumes:
+      # Named volume keeps data/divly.sqlite safe across container rebuilds & restarts!
+      - divly_sqlite_data:/app/data
+
+volumes:
+  divly_sqlite_data:

@@ -2,45 +2,42 @@
 name: splitbox-drop-engine
 description: >-
   Deterministic SplitBox state machine, sequential first-come-first-served
-  case-boundary slice allocation, GBP pence-accurate escrow/auto-refund cutoff
-  math, QR pickup pass generation, and compliant UK campus catalog schema. MUST
-  read before implementing src/types.ts, src/data/, src/store/, checkout, or
-  Demo Controls logic.
+  case-boundary slice allocation, GBP pence-accurate pre-auth hold/cutoff
+  settlement math, QR pickup pass generation, and compliant UoB campus catalog
+  schema. MUST read before implementing src/types.ts, src/data/, src/store/,
+  checkout, Supabase RPCs, or Demo Controls logic.
 ---
 
 # SplitBox Drop Engine & Sequential Allocation Skill
 
-Use this skill whenever designing or touching `src/types.ts`, `src/data/`, `src/store/`, basket previews, escrow checkout, or the Demo Controls bar (`Simulate Strangers`, `Trigger Cutoff`, `Reset`).
+Use this skill whenever designing or touching `src/types.ts`, `src/data/`, `src/store/`, `DropRepository` adapters, basket previews, Stripe manual-capture pre-auth checkout, or the Demo Controls bar (`Simulate Strangers`, `Trigger Cutoff`, `Reset`). Authoritative specs: [docs/product/mvp-spec.md](../../../docs/product/mvp-spec.md) and [docs/architecture/fullstack-blueprint.md](../../../docs/architecture/fullstack-blueprint.md).
 
-## 1. Drop-In Pure Allocation & Cutoff Helpers
+## 1. Pure Allocation & Cutoff Settlement Invariants
 
-Copy or adapt [resources/allocation.ts](./resources/allocation.ts) directly into `src/store/` or `src/utils/allocation.ts` so there are zero edge-case bugs under the 1-hour deadline:
+Reference [resources/allocation.ts](./resources/allocation.ts) and `src/store/dropEngine.ts` to preserve zero-drift allocation across both Demo Mode (`localStorage`) and Live Mode (Supabase Postgres `SELECT ... FOR UPDATE`):
 
-- **Integer Pence Math (`formatGBP(pence)`):** Store all prices in integer pence (`slicePricePence`, `retailPricePence`) to eliminate floating-point drift on multi-slice refunds and savings totals.
+- **Integer Pence Math (`formatGBP(pence)`):** Store all prices, convenience-retail benchmarks, crate fees, holds, and refunds in integer GBP pence (`slicePricePence`, `retailPricePence`, `vatRate: 0 | 0.20`) to prevent floating-point drift.
 - **Chronological Sequential Allocation (`allocateSlicesChronologically`):**
-  - Every item maintains an ordered ledger of claimed slices (`owner: 'stranger' | 'student'`, `orderId?`, `sliceIndex`, `boxNumber`).
-  - `boxNumber = Math.floor(globalZeroBasedSliceIndex / slicesPerBox) + 1`
-  - `slotInBox = (globalZeroBasedSliceIndex % slicesPerBox) + 1`
-  - **Acceptance Test (`brief.md` §3.2):** If `slicesPerBox = 4` and `3` stranger slices exist (`3/4`), ordering `2` slices assigns:
+  - Every hub-product pool maintains a strictly ordered ledger of claimed slices across `Box #1`, `Box #2`, …:
+    - `boxNumber = Math.floor(globalZeroBasedSliceIndex / slicesPerBox) + 1`
+    - `slotInBox = (globalZeroBasedSliceIndex % slicesPerBox) + 1`
+  - **Acceptance Gate ([docs/product/mvp-spec.md](../../../docs/product/mvp-spec.md)):** If `slicesPerBox = 4` and `3` slices are claimed (`3/4`), ordering `2` slices assigns:
     - Slice 1 → `Box #1` (`4/4` — **Box Locked!**)
     - Slice 2 → `Box #2` (`1/4` — **Pooling / Waiting for 3 Strangers**)
-- **Basket Cross-Box Preview (`previewBasketAllocation`):** Lets the Basket Drawer show the student *before* checkout exactly which slices immediately lock a box vs. which open a new overflow box (`£0.00` platform/delivery fees).
-- **Cutoff Resolution (`resolveDropCutoff`):**
-  - At cutoff, a box `b` is **Filled (`100%`)** iff total slices in `b === slicesPerBox`.
-  - Every student slice in a `100%` box transitions to `'FULFILLED'`.
-  - Every student slice in a `<100%` partial overflow box transitions to `'AUTO_REFUNDED'`—its `slicePricePence` is subtracted from the final charged total while all `'FULFILLED'` slices in the same order remain active!
-  - Generates a deterministic Pickup Pass (`pickupCode`: e.g. `BOX-409`, `pin`: 4-digit PIN e.g. `4829`, plus JSON/text QR payload rendered locally via `qrcode.react`'s `<QRCodeSVG />`) and displays the forfeiture grace-window rule.
+- **Crate Fee & Pre-Auth Hold Rules:**
+  - `£0.00` fee on crates `≥ £9.00` (`900` pence); transparent `£0.39` (`39` pence) small-crate card-cover fee below `£9.00`; 1 editable weekly order per student prior to Wednesday `23:59` cutoff.
+  - Always label payment holds as **`"Card Pre-Authorisation Hold (£0.00 Captured Until Box Locks)"`** (Stripe `capture_method: 'manual'`), never `"escrow"` in live production UI.
+- **Cutoff Settlement (`resolveDropCutoff`):**
+  - Every slice in a `100%` filled box transitions to `'FULFILLED'` (captured).
+  - Every slice in a `<100%` partial overflow box transitions to `'AUTO_REFUNDED'` (released uncaptured for `£0.00` while preserving fulfilled slices in the same order).
+  - Generates a Pickup Pass (`UOB-BOX-XXX`, 4-digit PIN, and HMAC-signed payload in Live Mode rendered locally via `qrcode.react` `<QRCodeSVG />`) **only** when `fulfilledSliceCount > 0`.
 
-## 2. UK Student Starter Catalog Rules (`brief.md` §3.1 & §4)
+## 2. UoB Campus Catalog & Hub Rules ([docs/product/mvp-spec.md](../../../docs/product/mvp-spec.md))
 
-1. **10–15 Items Strictly Within Allowed Categories:**
-   - Categories: `Pantry & Snacks`, `Drinks`, `Ambient Produce`, `Household Essentials`.
-   - **Strictly Excluded:** No chilled/refrigerated dairy/meat, no frozen items, no hot/prepared meals, and no loose bulk items requiring weighing/scooping. Use **shelf-stable** sealed sub-units only (e.g., Barista Oat Milk ambient cartons, tinned chopped tomatoes 6-pack, nakd/protein bar multipacks, basmati rice 2kg sealed bags, easy-peeler clementines net, 9-roll bamboo loo roll sub-packs, dishwasher/laundry pods tub).
-2. **Seeded Initial Pool States for 1-Click Reviewer Testing:**
-   - Pre-seed items at varied fill ratios so filters and boundary tests work out of the box:
-     - At least 2–3 items at `N-1 / N` (e.g., **`3/4`**, **`5/6`**, **`7/8`**) so *"Almost Full (1–2 Slices Left)"* filter and the **`3/4 + 2 slices` boundary test** work immediately on page load!
-     - At least 1 item already having `1` locked box + open `Box #2` (e.g., `6` claimed on a `4`-slice box → `Box #1` locked, `Box #2` at `2/4`).
-3. **UK Campus Pickup Hubs (3–4 Realistic Hubs):**
-   - E.g., *North Quad Student Union (Sat 12:00–15:00)*, *Fallowfield Oak House Reception (Sat 13:00–16:00)*, *Victoria Park Halls Courtyard (Sat 11:00–14:00)*.
-4. **`localStorage` Versioning & Reset:**
-   - Namespace key (e.g., `splitbox_prototype_v1`) and wire **Reset Prototype** in Demo Controls to clear `localStorage` and restore initial seeded state cleanly.
+1. **Compliant Sealed Ambient Items Only:**
+   - Seed 10–15 factory-sealed, individually **UK FIR 14-allergen labelled** sub-units of ambient groceries, drinks, and household essentials (`0%`-VAT essentials prioritized, with explicit `vatRate: 0 | 0.20`).
+   - **Strictly Excluded:** No chilled/refrigerated dairy/meat, no frozen goods, no prepared meals, and no loose bulk goods requiring weighing/decanting.
+2. **UoB Campus Hubs & Launch Defaults:**
+   - Default Drop #1 active launch hub: **`Vale · Shackleton`** (`status: 'active'`), with additional UoB hubs (`Guild · Mermaid Sq`, `Selly Oak · Bristol Rd`, `Pritchatts Park`) supported per-hub in Demo Mode and configurable as `'coming_soon'` demand votes in Live Mode.
+3. **Dual-Mode Persistence & Reset:**
+   - Demo Mode persists defensively under `localStorage` (`splitbox_uob_drop_v1`) with 1-click **Reset Prototype**; Live Mode delegates atomically to Supabase Postgres RPCs (`claim_sequential_slices`).

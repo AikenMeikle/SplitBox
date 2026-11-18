@@ -1,0 +1,42 @@
+# ==============================================================================
+# Render Blueprint (`render.yaml`) — 1-Click Cloud Deploy with Persistent Disk
+# Connect your GitHub repo on https://dashboard.render.com/blueprints
+# Note: Persistent disks on Render require the Starter plan ($7/mo) so SQLite
+# survives deploys and restarts cleanly at `/app/data/divly.sqlite`.
+# ==============================================================================
+services:
+  - type: web
+    name: divly-uob
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/state
+    disk:
+      name: divly-sqlite-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: SQLITE_PATH
+        value: /app/data/divly.sqlite
+      - key: ALLOW_DEV_LOGIN
+        value: "false"
+      - key: QR_HMAC_SECRET
+        generateValue: true
+      - key: ADMIN_PIN
+        sync: false
+      - key: ADMIN_EMAILS
+        value: founder@student.bham.ac.uk
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Divly UoB <noreply@yourdomain.co.uk>"
