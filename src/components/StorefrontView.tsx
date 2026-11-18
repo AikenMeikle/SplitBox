@@ -3,7 +3,10 @@
  *
  * Features:
  * - Compact 3-step student explainer hero + live campus drop banner
- * - Search bar, horizontal category filter pills, and sort selector
+ * - High-converting "🔥 Almost Full — Closer Bonus + Free Pickup" spotlight strip
+ *   that funnels early campus traffic into finishing the same open boxes
+ * - Search bar, horizontal category filter pills, and sort selector (defaulting to
+ *   `'almost_full'` — "Recommended: Almost Full & Extra Savings")
  * - Responsive 1/2/3/4-column supermarket grid of `ProductCard` tiles
  * - Sticky mobile bottom trolley summary bar (`< 768px`) for 1-tap checkout
  */
@@ -11,7 +14,10 @@
 import { useMemo, useState } from 'react';
 import {
   ArrowRight,
+  Check,
   CheckCircle2,
+  Flame,
+  Plus,
   QrCode,
   Search,
   ShoppingBasket,
@@ -19,13 +25,14 @@ import {
   Sparkles,
   Users,
   X,
+  Zap,
 } from 'lucide-react';
 import { BRAND_TAGLINE, CAMPUS_NAME } from '../config/brand';
 import { useApp } from '../context/AppContext';
 import { formatPence } from '../shared/types';
 import { ProductCard } from './ProductCard';
 
-type SortOption = 'biggest_saving' | 'almost_full' | 'lowest_price';
+type SortOption = 'almost_full' | 'biggest_saving' | 'lowest_price';
 
 const CANONICAL_CATEGORIES = [
   'Rice & Noodles',
@@ -42,18 +49,35 @@ export function StorefrontView() {
     loading,
     basket,
     basketCount,
+    addToBasket,
     setIsBasketOpen,
     setActiveTab,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [sortBy, setSortBy] = useState<SortOption>('biggest_saving');
+  const [sortBy, setSortBy] = useState<SortOption>('almost_full');
 
   const activeProducts = useMemo(
     () => products.filter((p) => p.isActive !== false),
     [products]
   );
+
+  // Top 4 almost-full pools ranked by fewest remaining spots first
+  const almostFullProducts = useMemo(() => {
+    return activeProducts
+      .filter((p) => p.isAlmostFull && p.openCaseRemainingSlots > 0)
+      .sort((a, b) => {
+        if (a.openCaseRemainingSlots !== b.openCaseRemainingSlots) {
+          return a.openCaseRemainingSlots - b.openCaseRemainingSlots;
+        }
+        if (b.closerDiscountPercent !== a.closerDiscountPercent) {
+          return b.closerDiscountPercent - a.closerDiscountPercent;
+        }
+        return b.fillRatio - a.fillRatio;
+      })
+      .slice(0, 4);
+  }, [activeProducts]);
 
   // Combine canonical categories with any custom categories added in Admin Ops
   const categories = useMemo(() => {
@@ -83,20 +107,24 @@ export function StorefrontView() {
 
     return [...matches].sort((a, b) => {
       if (sortBy === 'lowest_price') {
-        return a.sharePricePence - b.sharePricePence;
+        return a.effectiveSharePricePence - b.effectiveSharePricePence;
       }
       if (sortBy === 'almost_full') {
-        // Prioritise open cases that already have students waiting (1–2 spots left first)
+        // Rank `isAlmostFull` pools first, then fewest `openCaseRemainingSlots` first
+        if (a.isAlmostFull !== b.isAlmostFull) {
+          return a.isAlmostFull ? -1 : 1;
+        }
         const aOpen = a.openCaseClaimedSlots > 0 ? a.openCaseRemainingSlots : 999;
         const bOpen = b.openCaseClaimedSlots > 0 ? b.openCaseRemainingSlots : 999;
         if (aOpen !== bOpen) return aOpen - bOpen;
+        if (b.fillRatio !== a.fillRatio) return b.fillRatio - a.fillRatio;
         return b.lockedCasesCount - a.lockedCasesCount;
       }
-      // Default: Biggest Saving vs Aldi
+      // Biggest Saving vs Aldi
       if (b.savingsPercent !== a.savingsPercent) {
         return b.savingsPercent - a.savingsPercent;
       }
-      return a.sharePricePence - b.sharePricePence;
+      return a.effectiveSharePricePence - b.effectiveSharePricePence;
     });
   }, [activeProducts, searchQuery, selectedCategory, sortBy]);
 
@@ -109,17 +137,20 @@ export function StorefrontView() {
   const basketTotals = useMemo(() => {
     let subtotalPence = 0;
     let aldiTotalPence = 0;
+    let waivesFee = false;
     for (const [productId, qty] of Object.entries(basket)) {
       if (qty <= 0) continue;
       const item = products.find((p) => p.id === productId);
       if (item) {
-        subtotalPence += item.sharePricePence * qty;
+        subtotalPence += item.effectiveSharePricePence * qty;
         aldiTotalPence += item.aldiPricePence * qty;
+        if (item.waivesSmallOrderFee) waivesFee = true;
       }
     }
     return {
       subtotalPence,
       savedVsAldiPence: Math.max(0, aldiTotalPence - subtotalPence),
+      waivesFee,
     };
   }, [basket, products]);
 
@@ -129,7 +160,11 @@ export function StorefrontView() {
     : '£8.00';
 
   return (
-    <div className={`max-w-7xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 ${basketCount > 0 ? 'pb-24 md:pb-10' : 'pb-10'}`}>
+    <div
+      className={`max-w-7xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 ${
+        basketCount > 0 ? 'pb-24 md:pb-10' : 'pb-10'
+      }`}
+    >
       {/* Closed Drop Notice Banner */}
       {dropClosed && (
         <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-3">
@@ -168,7 +203,7 @@ export function StorefrontView() {
               {BRAND_TAGLINE}
             </h1>
             <p className="text-xs sm:text-sm text-gray-600">
-              Free campus hub collection on orders {freeThresholdText}+ at{' '}
+              Free campus hub collection on orders {freeThresholdText}+ (or any Almost-Full Closer item!) at{' '}
               <span className="font-semibold text-gray-800">
                 {settings?.hubName ?? 'UoB Campus Hub'}
               </span>{' '}
@@ -204,7 +239,7 @@ export function StorefrontView() {
                 <span>Beat Aldi shelf prices</span>
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
-                Wholesale cases unlock 15–35% lower unit prices than Aldi &amp; Selly Oak convenience stores.
+                Wholesale cases unlock 15–35% lower unit prices than Aldi, plus extra Closer Bonuses.
               </p>
             </div>
           </div>
@@ -225,6 +260,105 @@ export function StorefrontView() {
           </div>
         </div>
       </section>
+
+      {/* High-Converting "Almost Full" Closer Bonus Spotlight Strip */}
+      {!dropClosed && almostFullProducts.length > 0 && (
+        <section
+          className="card p-4 sm:p-5 bg-gradient-to-r from-emerald-50/80 via-white to-amber-50/60 border-emerald-200 space-y-3.5"
+          aria-label="Almost Full Closer Bonus Spotlight"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="inline-flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wide text-emerald-800">
+                <Flame className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>🔥 Almost Full — Lock a Box for Extra Closer Discount + Free Pickup</span>
+              </div>
+              <p className="text-xs sm:text-sm text-gray-700 mt-0.5">
+                Chip into a box that&apos;s 50%+ full to get an instant{' '}
+                <span className="font-bold text-emerald-800">6%–10% Closer Bonus</span> AND{' '}
+                <span className="font-bold text-emerald-800">£0.00 Free Hub Pickup</span> on your whole trolley!
+              </p>
+            </div>
+            <span className="badge-amber self-start sm:self-center shrink-0">
+              <Zap className="w-3.5 h-3.5" />
+              <span>Waives £0.50 small-order fee</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {almostFullProducts.map((item) => {
+              const qty = basket[item.id] ?? 0;
+              return (
+                <div
+                  key={item.id}
+                  className="p-3 rounded-xl bg-white border border-emerald-200/80 shadow-2xs flex flex-col justify-between gap-2.5"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full tabular-nums">
+                        Only {item.openCaseRemainingSlots}{' '}
+                        {item.openCaseRemainingSlots === 1 ? 'spot' : 'spots'} left!
+                      </span>
+                      {item.closerDiscountPercent > 0 && (
+                        <span className="text-[11px] font-bold text-emerald-700 tabular-nums">
+                          -{item.closerDiscountPercent}% Closer
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <span className="text-xl select-none" aria-hidden="true">
+                        {item.imageEmoji || '📦'}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-gray-900 truncate" title={item.name}>
+                          {item.name}
+                        </p>
+                        <p className="text-[11px] text-gray-500 truncate">{item.unitDescription}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                    <div className="tabular-nums">
+                      <span className="text-sm font-extrabold text-emerald-700">
+                        {formatPence(item.effectiveSharePricePence)}
+                      </span>
+                      {item.closerDiscountPence > 0 && (
+                        <span className="ml-1 text-[11px] text-gray-400 line-through">
+                          {formatPence(item.sharePricePence)}
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => addToBasket(item.id, 1)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                        qty > 0
+                          ? 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
+                    >
+                      {qty > 0 ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{qty} Added (+1)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Lock Spot</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Filter Toolbar: Search Input + Sort Dropdown + Category Pills */}
       <section className="space-y-3" aria-label="Catalog filters">
@@ -254,7 +388,10 @@ export function StorefrontView() {
 
           {/* Sort Dropdown */}
           <div className="flex items-center gap-2">
-            <label htmlFor="divly-sort" className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 shrink-0">
+            <label
+              htmlFor="divly-sort"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 shrink-0"
+            >
               <SlidersHorizontal className="w-3.5 h-3.5 text-gray-400" />
               <span>Sort:</span>
             </label>
@@ -264,8 +401,8 @@ export function StorefrontView() {
               onChange={(e) => setSortBy(e.target.value as SortOption)}
               className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs sm:text-sm font-semibold text-gray-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
+              <option value="almost_full">Recommended: Almost Full &amp; Extra Savings</option>
               <option value="biggest_saving">Biggest Saving vs Aldi</option>
-              <option value="almost_full">Almost Full (1–2 spots left)</option>
               <option value="lowest_price">Lowest Price</option>
             </select>
           </div>
@@ -370,7 +507,8 @@ export function StorefrontView() {
                 </span>
                 {basketTotals.savedVsAldiPence > 0 && (
                   <span className="ml-1.5 text-xs text-emerald-100 font-medium">
-                    (Save {formatPence(basketTotals.savedVsAldiPence)} vs Aldi)
+                    (Save {formatPence(basketTotals.savedVsAldiPence)}
+                    {basketTotals.waivesFee ? ' · £0 Fee' : ''})
                   </span>
                 )}
               </span>

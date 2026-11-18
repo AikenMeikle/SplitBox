@@ -1,63 +1,29 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { AlertTriangle, CheckCircle2, Edit3, PackagePlus, Search, Trash2, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Edit3, Globe, PackagePlus, Search, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
+import { formatPence, type AdminSummary } from '../../shared/types';
 import {
-  formatPence,
-  type AdminSummary,
-  type Product,
-  type ProductCategory,
-  type ProductWithPool,
-} from '../../shared/types';
+  AdminProductFormModal,
+  EMPTY_PRODUCT_FORM,
+  productToForm,
+  type ProductFormState,
+} from './AdminProductFormModal';
+import { AdminSupplierImportModal } from './AdminSupplierImportModal';
 
 interface AdminProductsTabProps {
   summary: AdminSummary;
   onReloadAll: () => Promise<void>;
 }
 
-const CATEGORIES: ProductCategory[] = [
-  'Rice & Noodles', 'Drinks & Caffeine', 'Protein & Snacks', 'Toiletries & Laundry', 'Cooking Staples',
-];
-
-interface ProductFormState {
-  id: string | null;
-  name: string;
-  brand: string;
-  category: string;
-  imageEmoji: string;
-  unitDescription: string;
-  caseDescription: string;
-  caseSize: string;
-  sharePriceGbp: string;
-  aldiPriceGbp: string;
-  aldiUnitLabel: string;
-  wholesaleCaseCostGbp: string;
-  isActive: boolean;
-}
-
-const EMPTY_FORM: ProductFormState = {
-  id: null, name: '', brand: '', category: 'Rice & Noodles', imageEmoji: '🛒',
-  unitDescription: '', caseDescription: '', caseSize: '4', sharePriceGbp: '2.50',
-  aldiPriceGbp: '3.49', aldiUnitLabel: 'equiv. at Aldi', wholesaleCaseCostGbp: '8.50', isActive: true,
-};
-
-function productToForm(p: ProductWithPool): ProductFormState {
-  return {
-    id: p.id, name: p.name, brand: p.brand, category: p.category, imageEmoji: p.imageEmoji,
-    unitDescription: p.unitDescription, caseDescription: p.caseDescription, caseSize: String(p.caseSize),
-    sharePriceGbp: (p.sharePricePence / 100).toFixed(2), aldiPriceGbp: (p.aldiPricePence / 100).toFixed(2),
-    aldiUnitLabel: p.aldiUnitLabel, wholesaleCaseCostGbp: (p.wholesaleCaseCostPence / 100).toFixed(2), isActive: p.isActive,
-  };
-}
-
 /**
- * No-Code Product & Aldi Price Manager allowing the student founder to create,
- * re-price, hide, or delete wholesale bulk items in seconds.
+ * No-Code Product, EAN Barcode, Shelf-Life & Aldi Price Manager,
+ * including Live UK Wholesale / Open Food Facts 1-Click Catalog Import.
  */
 export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps) {
   const [query, setQuery] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [form, setForm] = useState<ProductFormState>(EMPTY_PRODUCT_FORM);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -65,59 +31,13 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
     const q = query.trim().toLowerCase();
     if (!q) return summary.products;
     return summary.products.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q) || p.category.toLowerCase().includes(q),
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.brand.toLowerCase().includes(q) ||
+        p.category.toLowerCase().includes(q) ||
+        (p.eanBarcode ?? '').toLowerCase().includes(q),
     );
   }, [summary.products, query]);
-
-  const previewSharePence = Math.max(0, Math.round((parseFloat(form.sharePriceGbp) || 0) * 100));
-  const previewAldiPence = Math.max(0, Math.round((parseFloat(form.aldiPriceGbp) || 0) * 100));
-  const previewCaseCostPence = Math.max(0, Math.round((parseFloat(form.wholesaleCaseCostGbp) || 0) * 100));
-  const previewCaseSize = Math.max(1, Math.round(parseInt(form.caseSize, 10) || 1));
-  const previewSavingsPct = previewAldiPence > 0 ? Math.round(((previewAldiPence - previewSharePence) / previewAldiPence) * 100) : 0;
-  const previewCaseMarginPence = previewSharePence * previewCaseSize - previewCaseCostPence;
-
-  async function handleSaveProduct(e: FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setBanner(null);
-
-    const payload: Omit<Product, 'id'> = {
-      name: form.name.trim(),
-      brand: form.brand.trim(),
-      category: form.category,
-      imageEmoji: form.imageEmoji.trim() || '📦',
-      unitDescription: form.unitDescription.trim(),
-      caseDescription: form.caseDescription.trim(),
-      caseSize: previewCaseSize,
-      sharePricePence: previewSharePence,
-      aldiPricePence: previewAldiPence,
-      aldiUnitLabel: form.aldiUnitLabel.trim() || 'at Aldi',
-      wholesaleCaseCostPence: previewCaseCostPence,
-      isActive: form.isActive,
-    };
-
-    try {
-      if (form.id) {
-        await apiFetch<{ product: ProductWithPool }>(`/api/admin/products/${form.id}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        });
-        setBanner({ type: 'ok', text: `Updated "${payload.name}".` });
-      } else {
-        await apiFetch<{ product: ProductWithPool }>('/api/admin/products', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        setBanner({ type: 'ok', text: `Added "${payload.name}" to the storefront!` });
-      }
-      setModalOpen(false);
-      await onReloadAll();
-    } catch (err) {
-      setBanner({ type: 'err', text: err instanceof Error ? err.message : 'Failed to save product.' });
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleConfirmDelete(id: string, name: string) {
     setBanner(null);
@@ -130,8 +50,6 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
       setBanner({ type: 'err', text: err instanceof Error ? err.message : 'Failed to remove product.' });
     }
   }
-
-  const inputCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-xs text-slate-900 focus:border-emerald-600 focus:outline-none';
 
   return (
     <div className="space-y-4">
@@ -147,19 +65,29 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="search"
-            placeholder="Search products, brands, or categories…"
+            placeholder="Search products, brands, categories, or EAN…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-9 pr-3 py-2 text-xs text-slate-900 focus:border-emerald-600 focus:bg-white focus:outline-none"
           />
         </div>
-        <button
-          type="button"
-          onClick={() => { setForm(EMPTY_FORM); setModalOpen(true); }}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
-        >
-          <PackagePlus className="h-4 w-4" /> Add Bulk Product
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setImportModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+          >
+            <Globe className="h-4 w-4 text-emerald-600" />
+            🔍 Import from Live UK Wholesale / Barcode API
+          </button>
+          <button
+            type="button"
+            onClick={() => { setForm(EMPTY_PRODUCT_FORM); setModalOpen(true); }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+          >
+            <PackagePlus className="h-4 w-4" /> Add Bulk Product
+          </button>
+        </div>
       </div>
 
       {/* Product Catalog Table */}
@@ -168,7 +96,7 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
           <table className="w-full text-left text-xs">
             <thead className="border-b border-gray-200 bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-5 py-3">Item &amp; Category</th>
+                <th className="px-5 py-3">Item, EAN &amp; Shelf Life</th>
                 <th className="px-4 py-3">Share / Case Split</th>
                 <th className="px-4 py-3 text-right">Divly vs Aldi</th>
                 <th className="px-4 py-3 text-right">Wholesale &amp; Margin</th>
@@ -189,7 +117,10 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
                             <span className="font-semibold text-slate-900">{p.name}</span>
                             {!p.isActive && <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Hidden</span>}
                           </div>
-                          <p className="text-[11px] text-slate-500">{p.brand} · {p.category}</p>
+                          <p className="text-[11px] text-slate-500">
+                            {p.brand} · {p.category} · {p.shelfLifeWeeks ?? 26}w shelf
+                            {p.eanBarcode ? ` · EAN ${p.eanBarcode}` : ''}
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -213,7 +144,10 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
                     </td>
                     <td className="px-4 py-3.5 text-center text-slate-600">
                       <p className="font-semibold text-slate-800">{p.lockedCasesCount} locked</p>
-                      <p className="text-[11px] text-slate-400">{p.openCaseClaimedSlots}/{p.caseSize} open</p>
+                      <p className="text-[11px] text-slate-400">
+                        {p.openCaseClaimedSlots}/{p.caseSize} open
+                        {(p.carryoverStockSlots ?? 0) > 0 ? ` · ${p.carryoverStockSlots} held` : ''}
+                      </p>
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       {deletingId === p.id ? (
@@ -223,7 +157,7 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
                         </div>
                       ) : (
                         <div className="inline-flex items-center gap-1.5">
-                          <button type="button" onClick={() => { setForm(productToForm(p)); setModalOpen(true); }} className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-gray-50">
+                          <button type="button" onClick={() => { setForm(productToForm(p, p.id)); setModalOpen(true); }} className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-gray-50">
                             <Edit3 className="h-3.5 w-3.5" /> Edit
                           </button>
                           <button type="button" onClick={() => setDeletingId(p.id)} className="rounded-lg border border-gray-200 bg-white p-1.5 text-slate-400 hover:border-red-200 hover:text-red-600" aria-label={`Delete ${p.name}`}>
@@ -240,96 +174,30 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
         </div>
       </div>
 
-      {/* Add / Edit Product Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px]" onClick={() => !saving && setModalOpen(false)} />
-          <form role="dialog" aria-modal="true" onSubmit={handleSaveProduct} className="relative z-10 w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-xl border border-gray-200 bg-white p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                {form.id ? 'Edit Bulk Product & Aldi Comparison' : 'Add New Bulk Product'}
-              </h3>
-              <button type="button" onClick={() => setModalOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-gray-100 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+      <AdminSupplierImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImported={async (name) => {
+          await onReloadAll();
+          setBanner({ type: 'ok', text: `Imported "${name}" from live UK catalog!` });
+        }}
+        onCustomiseDraft={(draft) => {
+          setForm(productToForm(draft, null));
+          setModalOpen(true);
+        }}
+      />
 
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-6">
-              <div className="sm:col-span-1">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Emoji</label>
-                <input type="text" required value={form.imageEmoji} onChange={(e) => setForm({ ...form, imageEmoji: e.target.value })} className={`${inputCls} text-center text-base`} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Brand</label>
-                <input type="text" required placeholder="e.g. Nongshim" value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} className={inputCls} />
-              </div>
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Product Name</label>
-                <input type="text" required placeholder="e.g. Shin Ramyun Multipack" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} />
-              </div>
-
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Category</label>
-                <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={`${inputCls} bg-white`}>
-                  {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-              </div>
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Splits per Case (Case Size)</label>
-                <input type="number" min="1" max="48" required value={form.caseSize} onChange={(e) => setForm({ ...form, caseSize: e.target.value })} className={inputCls} />
-              </div>
-
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Student Share Size</label>
-                <input type="text" required placeholder="e.g. 5 × 120g packs" value={form.unitDescription} onChange={(e) => setForm({ ...form, unitDescription: e.target.value })} className={inputCls} />
-              </div>
-              <div className="sm:col-span-3">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Full Wholesale Case Spec</label>
-                <input type="text" required placeholder="e.g. 20-pack outer box" value={form.caseDescription} onChange={(e) => setForm({ ...form, caseDescription: e.target.value })} className={inputCls} />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Divly Share Price (£)</label>
-                <input type="number" step="0.01" min="0.01" required value={form.sharePriceGbp} onChange={(e) => setForm({ ...form, sharePriceGbp: e.target.value })} className={inputCls} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Aldi Price (£)</label>
-                <input type="number" step="0.01" min="0.01" required value={form.aldiPriceGbp} onChange={(e) => setForm({ ...form, aldiPriceGbp: e.target.value })} className={inputCls} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Wholesale Case Cost (£)</label>
-                <input type="number" step="0.01" min="0" required value={form.wholesaleCaseCostGbp} onChange={(e) => setForm({ ...form, wholesaleCaseCostGbp: e.target.value })} className={inputCls} />
-              </div>
-
-              <div className="sm:col-span-4">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Aldi Unit Comparison Label</label>
-                <input type="text" required placeholder="e.g. 5-pack equiv. at Aldi" value={form.aldiUnitLabel} onChange={(e) => setForm({ ...form, aldiUnitLabel: e.target.value })} className={inputCls} />
-              </div>
-              <div className="sm:col-span-2 flex items-end pb-1.5">
-                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                  <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} className="h-4 w-4 rounded border-gray-300 text-emerald-600" />
-                  Visible in Shop
-                </label>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 text-xs">
-              <span className="font-semibold text-emerald-800">Student Saving: {previewSavingsPct}% vs Aldi</span>
-              <span className="font-semibold text-slate-800">
-                Case Revenue: {formatPence(previewSharePence * previewCaseSize)} · Margin:{' '}
-                <strong className={previewCaseMarginPence >= 0 ? 'text-emerald-700' : 'text-red-600'}>{formatPence(previewCaseMarginPence)}/case</strong>
-              </span>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setModalOpen(false)} className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-gray-50">Cancel</button>
-              <button type="submit" disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50">
-                {saving ? 'Saving…' : form.id ? 'Save Changes' : 'Create Product'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <AdminProductFormModal
+        open={modalOpen}
+        form={form}
+        setForm={setForm}
+        onClose={() => setModalOpen(false)}
+        onSaved={async (msg) => {
+          await onReloadAll();
+          setBanner({ type: 'ok', text: msg });
+        }}
+        onError={(msg) => setBanner({ type: 'err', text: msg })}
+      />
     </div>
   );
 }

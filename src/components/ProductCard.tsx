@@ -3,16 +3,15 @@
  *
  * Displays:
  * - Emoji visual badge, category & bold green "Save X% vs Aldi" pill
- * - Brand, product title & exact student share description
- * - Prominent Divly bulk share price vs struck-through Aldi price
- * - Clean horizontal segmented slot bar ("3 of 4 students chipped in — 1 spot left!")
- * - Locked full-case count ("X cases locked ✅")
- * - Quick WhatsApp / copy-link button to invite hallmates to fill the case
- * - "+ Chip In" button or "- qty +" quantity stepper
+ * - Closer Incentive pill ("⚡ CLOSER BONUS: -X% + FREE PICKUP") on almost-full boxes
+ * - Instant hub carryover badge ("✓ Instant Stock Held at Hub") when rollover units exist
+ * - Prominent effective bulk share price vs base share price & Aldi shelf price
+ * - Clean horizontal segmented slot bar ("Only X spot(s) left to lock Case #Y!")
+ * - Quick WhatsApp / copy-link button + "+ Chip In" / "- qty +" quantity stepper
  */
 
 import { useState } from 'react';
-import { Check, CheckCircle2, Minus, Plus, Share2 } from 'lucide-react';
+import { Check, CheckCircle2, Minus, PackageCheck, Plus, Share2, Zap } from 'lucide-react';
 import { BRAND_NAME } from '../config/brand';
 import { useApp } from '../context/AppContext';
 import { formatPence, type ProductWithPool } from '../shared/types';
@@ -29,7 +28,20 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
   const qtyInBasket = basket[product.id] ?? 0;
   const claimedInOpen = product.openCaseClaimedSlots;
   const remainingInOpen = product.openCaseRemainingSlots;
-  const isAlmostFull = claimedInOpen > 0 && remainingInOpen <= 2;
+  const hasCloserBonus = Boolean(product.isAlmostFull && product.closerDiscountPence > 0);
+  const displayPricePence = hasCloserBonus
+    ? product.effectiveSharePricePence
+    : product.sharePricePence;
+  const carryoverSlots = product.carryoverStockSlots ?? 0;
+
+  // Total % saved vs Aldi including any active Closer Bonus
+  const effectiveSavingsPercent =
+    product.aldiPricePence > 0
+      ? Math.max(
+          product.savingsPercent,
+          Math.round(((product.aldiPricePence - displayPricePence) / product.aldiPricePence) * 100)
+        )
+      : product.savingsPercent;
 
   // Build friendly WhatsApp / clipboard invite message so hallmates can lock the box
   async function handleShareInvite() {
@@ -37,8 +49,8 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
     const url = window.location.origin;
     const text =
       spotsNeeded > 0 && claimedInOpen > 0
-        ? `Only ${spotsNeeded} ${spotsNeeded === 1 ? 'spot' : 'spots'} left to lock ${product.brand} ${product.name} (${product.unitDescription}) at ${formatPence(product.sharePricePence)} vs Aldi ${formatPence(product.aldiPricePence)} on ${BRAND_NAME}! ${url}`
-        : `Split a bulk case of ${product.brand} ${product.name} (${product.unitDescription}) for ${formatPence(product.sharePricePence)} (Save ${product.savingsPercent}% vs Aldi) on ${BRAND_NAME}: ${url}`;
+        ? `Only ${spotsNeeded} ${spotsNeeded === 1 ? 'spot' : 'spots'} left to lock ${product.brand} ${product.name} (${product.unitDescription}) at ${formatPence(displayPricePence)} vs Aldi ${formatPence(product.aldiPricePence)} on ${BRAND_NAME}! ${url}`
+        : `Split a bulk case of ${product.brand} ${product.name} (${product.unitDescription}) for ${formatPence(displayPricePence)} (Save ${effectiveSavingsPercent}% vs Aldi) on ${BRAND_NAME}: ${url}`;
 
     try {
       if (navigator.share) {
@@ -59,10 +71,16 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
   }
 
   return (
-    <article className="card p-4 flex flex-col justify-between gap-3.5 hover:border-gray-300 transition-colors">
-      {/* Top Section: Visual Tile, Savings Pill & Share Button */}
+    <article
+      className={`card p-4 flex flex-col justify-between gap-3.5 transition-colors ${
+        hasCloserBonus
+          ? 'border-emerald-300 ring-1 ring-emerald-500/15 hover:border-emerald-400'
+          : 'hover:border-gray-300'
+      }`}
+    >
+      {/* Top Section: Visual Tile, Savings Pill, Closer Bonus & Share Button */}
       <div>
-        <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="flex items-start justify-between gap-2 mb-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div
               className="w-12 h-12 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-2xl shrink-0 select-none"
@@ -79,9 +97,9 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {product.savingsPercent > 0 && (
+            {effectiveSavingsPercent > 0 && (
               <span className="badge-green tabular-nums">
-                Save {product.savingsPercent}% vs Aldi
+                Save {effectiveSavingsPercent}% vs Aldi
               </span>
             )}
             <button
@@ -100,6 +118,24 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
           </div>
         </div>
 
+        {/* Closer Bonus & Instant Hub Stock Badges */}
+        {(hasCloserBonus || carryoverSlots > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+            {hasCloserBonus && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-extrabold tracking-tight tabular-nums">
+                <Zap className="w-3 h-3 text-amber-600 shrink-0" />
+                <span>⚡ CLOSER BONUS: -{product.closerDiscountPercent}% + FREE PICKUP</span>
+              </span>
+            )}
+            {carryoverSlots > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
+                <PackageCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                <span>✓ Instant Stock Held at Hub</span>
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Product Name & Exact Share Portion */}
         <h3 className="text-base font-bold text-gray-900 leading-snug mb-1">
           {product.name}
@@ -116,13 +152,28 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
       <div className="space-y-3 pt-1">
         {/* Supermarket Shelf Price Tag */}
         <div className="flex items-baseline justify-between gap-2 pt-2.5 border-t border-gray-100">
-          <div>
-            <div className="flex items-baseline gap-2 tabular-nums">
-              <span className="text-xl font-extrabold text-gray-900">
-                {formatPence(product.sharePricePence)}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 tabular-nums">
+              <span
+                className={`text-xl font-extrabold ${
+                  hasCloserBonus ? 'text-emerald-700' : 'text-gray-900'
+                }`}
+              >
+                {formatPence(displayPricePence)}
               </span>
-              <span className="text-xs font-medium text-gray-400 line-through">
-                {formatPence(product.aldiPricePence)}
+              {hasCloserBonus && (
+                <span
+                  className="text-xs font-semibold text-gray-500 line-through"
+                  title="Standard Divly bulk share price"
+                >
+                  Base {formatPence(product.sharePricePence)}
+                </span>
+              )}
+              <span
+                className="text-xs font-medium text-gray-400 line-through"
+                title="Aldi supermarket comparison price"
+              >
+                Aldi {formatPence(product.aldiPricePence)}
               </span>
             </div>
             <p className="text-[11px] text-gray-500 truncate" title={product.aldiUnitLabel}>
@@ -142,19 +193,27 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
         </div>
 
         {/* Clean Horizontal Segmented Slot Progress Bar */}
-        <div className="p-2.5 rounded-xl bg-gray-50 border border-gray-100 space-y-1.5">
-          <div className="flex items-center justify-between gap-2 text-xs">
+        <div
+          className={`p-2.5 rounded-xl border space-y-1.5 ${
+            hasCloserBonus
+              ? 'bg-emerald-50/60 border-emerald-200'
+              : 'bg-gray-50 border-gray-100'
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
             <span className="font-semibold text-gray-800 tabular-nums">
-              {claimedInOpen} of {product.caseSize} students chipped in
+              {claimedInOpen} of {product.caseSize} chipped in
             </span>
             <span
-              className={`text-[11px] font-semibold tabular-nums ${
-                isAlmostFull ? 'text-amber-700' : 'text-emerald-700'
+              className={`text-[11px] font-bold tabular-nums ${
+                hasCloserBonus ? 'text-amber-800' : 'text-emerald-700'
               }`}
             >
               {claimedInOpen === 0
                 ? `Case #${product.currentCaseNumber} open`
-                : `${remainingInOpen} ${remainingInOpen === 1 ? 'spot' : 'spots'} left!`}
+                : hasCloserBonus
+                  ? `Only ${remainingInOpen} ${remainingInOpen === 1 ? 'spot' : 'spots'} left to lock Case #${product.currentCaseNumber}!`
+                  : `${remainingInOpen} ${remainingInOpen === 1 ? 'spot' : 'spots'} left`}
             </span>
           </div>
 
@@ -180,7 +239,9 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
                         ? 'bg-emerald-600'
                         : isPreviewInBasket
                           ? 'bg-emerald-300'
-                          : 'bg-gray-200'
+                          : hasCloserBonus
+                            ? 'bg-amber-200/80'
+                            : 'bg-gray-200'
                     }`}
                   />
                 );
@@ -214,10 +275,16 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
           >
             <span className="inline-flex items-center gap-1.5">
               <Plus className="w-4 h-4" />
-              <span>{dropClosed ? 'Drop Closed' : 'Chip In'}</span>
+              <span>
+                {dropClosed
+                  ? 'Drop Closed'
+                  : hasCloserBonus
+                    ? 'Claim Closer Bonus'
+                    : 'Chip In'}
+              </span>
             </span>
             <span className="tabular-nums font-bold text-emerald-50">
-              {formatPence(product.sharePricePence)}
+              {formatPence(displayPricePence)}
             </span>
           </button>
         ) : (
@@ -235,7 +302,7 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
                 {qtyInBasket} in trolley
               </span>
               <span className="block text-[11px] font-medium text-emerald-700">
-                {formatPence(product.sharePricePence * qtyInBasket)} total
+                {formatPence(displayPricePence * qtyInBasket)} total
               </span>
             </div>
             <button

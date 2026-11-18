@@ -2,7 +2,7 @@
 
 **Divly** lets University of Birmingham (`@student.bham.ac.uk` / `@bham.ac.uk`) students chip in with other students on campus to split wholesale bulk cases (20kg Basmati sacks, 40-pack noodle cartons, Oatly Barista trays, laundry tubs) at prices **15–35% cheaper than Aldi**.
 
-Students claim individual shares during the week. At the weekly cutoff, every **100% filled case** is locked and fulfilled for Saturday pickup at the UoB campus hub, while any **unfilled overflow slots are automatically refunded** to the penny.
+Students claim individual shares during the week. At the weekly cutoff, every **100% filled case** (plus any shelf-stable cases safely underwritten by the founder) is fulfilled for Saturday pickup at the UoB campus hub, while unfilled risky overflow slots are **automatically refunded** to the penny.
 
 ---
 
@@ -22,13 +22,13 @@ npm run dev
 ```
 
 Open **http://localhost:5173** in your browser.
-- In local development, **1-click Test Login (`Student` | `Admin`)** is enabled in the top bar, and simulated Stripe Test Checkout works immediately with zero API keys.
+- In local development, **1-click Test Login (`Student` | `Admin`)** is enabled in the top bar, simulated Stripe Test Checkout works immediately, and **Open Food Facts UK live barcode/product import** works out of the box with zero API keys.
 - Default Admin PIN in local dev: `uob-admin-2026` (override via `ADMIN_PIN` in `.env`).
 
 ### Test & Production Build Commands
 
 ```bash
-# Run automated concurrency, cutoff auto-refund & QR security tests
+# Run automated concurrency, closer-bonus, buy-ahead predictor, refund & QR security tests
 npm test
 
 # Type-check & build production frontend bundle into dist/
@@ -43,12 +43,12 @@ npm start
 ## Core Features
 
 - **Aldi-Beating Shared Case Pools:** Real-time segmented slot bars (`"3 of 4 students chipped in"`) powered by Server-Sent Events (`/api/events`) so open browsers update live whenever someone chips in.
+- **Almost-Full Closer Bonus & Fee Waiver:** Solves early low-density campus cold-start by spotlighting boxes that are `50%+` full (or `1–2` spots away from locking) with an extra **6%–10% Closer Bonus** (margin-clamped above wholesale unit cost) AND **£0.00 Free Hub Pickup** across the student's entire trolley.
 - **Atomic Case-Boundary Allocation:** SQLite `BEGIN IMMEDIATE` transactions guarantee two students checking out at the exact same millisecond never claim the same slot. Overflow orders seamlessly spill from Case #1 into Case #2.
-- **Weekly Cutoff & Penny-Exact Auto-Refunds:** One click in the Admin Dashboard settles the drop: `100%` locked cases move to `fulfilled`, incomplete overflow cases move to `auto_refunded`, and partial/full refunds (including small-order fees if zero items fulfilled) are calculated automatically.
-- **Tamper-Proof Campus Pickup Passes:** Every paid order receives an `HMAC-SHA256` signed QR pass (`DV1.<orderId>.<nonce>.<sig>`), a `UOB-XXXXXX` pickup code, and a 6-digit PIN verified in constant time at the Saturday Hub scanner.
-- **UoB Campus Email Verification:** Built-in 6-digit OTP sign-in restricted to `@student.bham.ac.uk` and `@bham.ac.uk` (prints codes to console in dev; sends real emails via Resend when `RESEND_API_KEY` is set).
-- **Dual-Mode Checkout:** Automatically uses real **Stripe Checkout** (Card, Apple Pay, Google Pay + live Stripe Refunds API) when `STRIPE_SECRET_KEY` is configured, or falls back cleanly to an interactive Test Checkout sheet for demos and local dev.
-- **No-Code Founder Admin Dashboard:** Live wholesale shopping list (only `100%` locked full cases to buy at Costco/Booker + CSV export), no-code product & Aldi price editor, hub/cutoff settings editor, and Saturday QR/PIN pickup scanner.
+- **Bayesian Incomplete-Box Buy-Ahead Safety Predictor:** Evaluates incomplete open boxes at cutoff using a **Gamma-Poisson weekly demand model**, **Poisson cumulative sell-through probability `P(D >= u)`** within half the item's shelf life, and **upfront student cash coverage float math** — letting the founder safely underwrite high-demand shelf-stable boxes (`SAFE_BUY_AHEAD`) and roll leftover stock (`carryoverStockSlots`) into next week instead of refunding students.
+- **Live UK Wholesale & Open Food Facts Barcode API:** Search real UK groceries by name or EAN-13 barcode right inside Admin using **Open Food Facts UK v2** (works out of the box with zero API keys!), optionally connect `QOGITA_API_KEY` or `WHOLESALE_ORDER_WEBHOOK_URL` for automated B2B purchase orders, and open 1-click **Qogita / Booker / Bestway** SKU links.
+- **Weekly Cutoff & Penny-Exact Auto-Refunds:** One click in Admin settles the drop (`locked_box` + approved buy-ahead boxes -> `fulfilled`; remaining `pooling` -> `auto_refunded`) with penny-exact Stripe or simulated refunds.
+- **Tamper-Proof Campus Pickup Passes & UoB OTP Auth:** `HMAC-SHA256` signed QR passes (`DV1.<orderId>.<nonce>.<sig>`), `UOB-XXXXXX` codes, 6-digit PINs, and `@student.bham.ac.uk` / `@bham.ac.uk` email verification.
 
 ---
 
@@ -60,11 +60,13 @@ Browser (React 19 + TypeScript + Tailwind v4)
    ├── REST JSON (/api/*) ───────────────┐
    └── Live SSE Stream (/api/events) ────▼
                               Express Server (Node.js 22 + tsx)
-                                 ├── server/services/poolAllocator.ts  (BEGIN IMMEDIATE slot math)
-                                 ├── server/services/settlement.ts     (Cutoff & auto-refund math)
-                                 ├── server/services/qrPass.ts         (HMAC-SHA256 pickup passes)
-                                 ├── server/services/auth.ts           (@student.bham.ac.uk OTPs)
-                                 └── server/services/stripeService.ts  (Stripe Checkout & Refunds)
+                                 ├── server/services/poolAllocator.ts     (BEGIN IMMEDIATE slot math)
+                                 ├── server/services/buyAheadPredictor.ts (Gamma-Poisson rollover risk)
+                                 ├── server/services/wholesaleApi.ts      (Open Food Facts UK + Qogita B2B)
+                                 ├── server/services/settlement.ts        (Cutoff, carryover & auto-refunds)
+                                 ├── server/services/qrPass.ts            (HMAC-SHA256 pickup passes)
+                                 ├── server/services/auth.ts              (@student.bham.ac.uk OTPs)
+                                 └── server/services/stripeService.ts     (Stripe Checkout & Refunds)
                                          │
                                          ▼
                               Built-in SQLite (WAL mode)
@@ -85,6 +87,6 @@ Divly runs as a single lightweight container with a persistent volume mounted at
 
 ## Documentation Map
 
-- **[STUDENT_DEV_GUIDE.md](./STUDENT_DEV_GUIDE.md)** — **Start here if you're maintaining or customizing Divly!** Explains every file, walks through the 4 core algorithms in plain English, and gives copy-paste recipes for common tasks.
+- **[STUDENT_DEV_GUIDE.md](./STUDENT_DEV_GUIDE.md)** — **Start here if you're maintaining or customizing Divly!** Explains every file, walks through all core algorithms (including Closer Bonuses, Bayesian Buy-Ahead math, and Live Wholesale APIs) in plain English, and gives copy-paste recipes.
 - **[AGENTS.md](./AGENTS.md)** — Complete API & TypeScript data contract.
 - **[FOUNDER_BUSINESS_PLAYBOOK.md](./FOUNDER_BUSINESS_PLAYBOOK.md)** — Campus operations, wholesale supplier strategy, and UoB launch playbook.

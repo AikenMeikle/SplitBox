@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, CheckCircle2, CreditCard, Lock, Minus, Plus,
-  ShieldCheck, ShoppingBag, Sparkles, Trash2, X,
+  ShieldCheck, ShoppingBag, Sparkles, Trash2, X, Zap,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
@@ -13,10 +13,7 @@ import {
   type ProductWithPool,
 } from '../shared/types';
 
-/**
- * Computes a live preview of which wholesale case(s) a student's shares will fill,
- * using the exact sequential slot math from `server/services/poolAllocator.ts`.
- */
+/** Live preview of sequential case allocation matching `server/services/poolAllocator.ts`. */
 function getAllocationPreview(
   product: ProductWithPool,
   qty: number,
@@ -41,22 +38,18 @@ function getAllocationPreview(
   const lastLockedCase = firstCase + extraFullCases;
   const caseRef = firstCase === lastLockedCase ? `Case #${firstCase}` : `Cases #${firstCase}–#${lastLockedCase}`;
 
-  if (overflow === 0) {
-    return { label: `Locks ${caseRef} immediately ✅`, tone: 'locked' };
-  }
+  if (overflow === 0) return { label: `Locks ${caseRef} immediately ✅`, tone: 'locked' };
 
   const lockedQty = qty - overflow;
-  const lockVerb = lockedQty === 1 ? '1 locks' : `${lockedQty} lock`;
-  const openVerb = overflow === 1 ? '1 opens' : `${overflow} open`;
   return {
-    label: `${lockVerb} ${caseRef} ✅ · ${openVerb} Case #${lastLockedCase + 1} (auto-refunded if unfilled)`,
+    label: `${lockedQty === 1 ? '1 locks' : `${lockedQty} lock`} ${caseRef} ✅ · ${overflow === 1 ? '1 opens' : `${overflow} open`} Case #${lastLockedCase + 1} (auto-refunded if unfilled)`,
     tone: 'mixed',
   };
 }
 
 /**
- * Slide-over right trolley drawer showing free-fee progress, live case-lock previews,
- * Aldi savings receipt, and simulated/live Stripe checkout.
+ * Slide-over right trolley drawer with Almost-Full Closer Bonus fee waivers,
+ * 1-tap cold-start upsell card, live case-lock previews, and Stripe checkout.
  */
 export function BasketDrawer() {
   const {
@@ -95,19 +88,48 @@ export function BasketDrawer() {
     [basket, products],
   );
 
+  const hasAlmostFullItem = basketLines.some(({ product }) => Boolean(product.isAlmostFull));
+  const feeWaivedByCloser = basketLines.some(({ product }) => Boolean(product.waivesSmallOrderFee));
+
+  // #1 almost-full candidate for 1-tap cold-start fee-waiver upsell
+  const topAlmostFullUpsell = useMemo(() => {
+    if (basketLines.length === 0 || hasAlmostFullItem) return null;
+    const candidates = products.filter((p) => p.isActive && p.isAlmostFull && !(basket[p.id] > 0));
+    if (candidates.length === 0) return null;
+    return [...candidates].sort(
+      (a, b) => a.openCaseRemainingSlots - b.openCaseRemainingSlots || b.closerDiscountPercent - a.closerDiscountPercent,
+    )[0];
+  }, [basketLines.length, hasAlmostFullItem, products, basket]);
+
   if (!isBasketOpen) return null;
 
   const thresholdPence = settings?.freeDeliveryThresholdPence ?? 800;
   const smallOrderFeePence = settings?.smallOrderFeePence ?? 50;
   const dropClosed = settings?.dropStatus === 'closed';
 
-  const subtotalPence = basketLines.reduce((s, { product, qty }) => s + product.sharePricePence * qty, 0);
+  const subtotalPence = basketLines.reduce(
+    (s, { product, qty }) => s + (product.effectiveSharePricePence ?? product.sharePricePence) * qty,
+    0,
+  );
+  const closerBonusSavedPence = basketLines.reduce(
+    (s, { product, qty }) =>
+      s + Math.max(0, product.sharePricePence - (product.effectiveSharePricePence ?? product.sharePricePence)) * qty,
+    0,
+  );
+  const maxCloserPercent = basketLines.reduce(
+    (m, { product }) => (product.isAlmostFull ? Math.max(m, product.closerDiscountPercent || 0) : m),
+    0,
+  );
   const aldiTotalPence = basketLines.reduce((s, { product, qty }) => s + product.aldiPricePence * qty, 0);
   const savedVsAldiPence = Math.max(0, aldiTotalPence - subtotalPence);
-  const feePence = subtotalPence === 0 || subtotalPence >= thresholdPence ? 0 : smallOrderFeePence;
+  const feePence =
+    subtotalPence === 0 || subtotalPence >= thresholdPence || feeWaivedByCloser ? 0 : smallOrderFeePence;
   const totalToPayPence = subtotalPence + feePence;
-  const remainingForFreeFeePence = Math.max(0, thresholdPence - subtotalPence);
-  const progressPercent = thresholdPence <= 0 ? 100 : Math.min(100, Math.round((subtotalPence / thresholdPence) * 100));
+  const remainingForFreeFeePence = feeWaivedByCloser ? 0 : Math.max(0, thresholdPence - subtotalPence);
+  const progressPercent =
+    feeWaivedByCloser || thresholdPence <= 0
+      ? 100
+      : Math.min(100, Math.round((subtotalPence / thresholdPence) * 100));
 
   async function handleStartCheckout() {
     if (basketLines.length === 0 || dropClosed) return;
@@ -197,11 +219,16 @@ export function BasketDrawer() {
           </button>
         </div>
 
-        {/* Free-Fee Progress Strip */}
+        {/* Free-Fee / Closer Bonus Progress Strip */}
         {basketLines.length > 0 && !pendingCheckout && (
           <div className="border-b border-gray-200 bg-gray-50 px-5 py-3">
             <div className="flex items-center justify-between text-xs font-medium mb-1.5">
-              {remainingForFreeFeePence === 0 ? (
+              {feeWaivedByCloser && subtotalPence < thresholdPence ? (
+                <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                  <Zap className="h-4 w-4 text-amber-500" />
+                  £0.00 fee unlocked via Closer Bonus! ⚡
+                </span>
+              ) : remainingForFreeFeePence === 0 ? (
                 <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   Unlocked £0.00 campus hub pickup!
@@ -323,9 +350,10 @@ export function BasketDrawer() {
               </div>
             </div>
           ) : (
-            /* Itemized Basket with Live Case-Allocation Preview */
             <div className="space-y-3">
               {basketLines.map(({ product, qty }) => {
+                const unitPrice = product.effectiveSharePricePence ?? product.sharePricePence;
+                const hasCloser = Boolean(product.isAlmostFull && product.closerDiscountPence > 0);
                 const preview = getAllocationPreview(product, qty);
                 const badgeStyle =
                   preview.tone === 'locked'
@@ -342,13 +370,20 @@ export function BasketDrawer() {
                           {product.imageEmoji}
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[11px] font-medium text-slate-500">{product.brand}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-[11px] font-medium text-slate-500">{product.brand}</p>
+                            {hasCloser && (
+                              <span className="rounded-full bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                                ⚡ -{product.closerDiscountPercent}% Closer
+                              </span>
+                            )}
+                          </div>
                           <h4 className="truncate text-sm font-semibold text-slate-900">{product.name}</h4>
                           <p className="text-xs text-slate-500">{product.unitDescription} per share</p>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-slate-900">{formatPence(product.sharePricePence * qty)}</p>
+                        <p className="text-sm font-bold text-slate-900">{formatPence(unitPrice * qty)}</p>
                         <p className="text-[11px] text-slate-400 line-through">Aldi {formatPence(product.aldiPricePence * qty)}</p>
                       </div>
                     </div>
@@ -378,6 +413,37 @@ export function BasketDrawer() {
                   </div>
                 );
               })}
+
+              {/* Smart 1-Tap Cold-Start Upsell Card when < £8.00 and no Closer item yet */}
+              {subtotalPence > 0 && subtotalPence < thresholdPence && !hasAlmostFullItem && topAlmostFullUpsell && (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 p-3.5 space-y-2.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
+                    <Zap className="h-4 w-4 shrink-0 text-amber-500" />
+                    <span>Skip the {formatPence(smallOrderFeePence)} fee + get Extra Closer Discount!</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2.5 rounded-lg border border-emerald-200 bg-white p-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-lg shrink-0">{topAlmostFullUpsell.imageEmoji}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-slate-900">
+                          {topAlmostFullUpsell.brand} · {topAlmostFullUpsell.name}
+                        </p>
+                        <p className="text-[11px] text-emerald-700 font-medium">
+                          {topAlmostFullUpsell.openCaseRemainingSlots} spot{topAlmostFullUpsell.openCaseRemainingSlots === 1 ? '' : 's'} left ·{' '}
+                          {formatPence(topAlmostFullUpsell.effectiveSharePricePence)} (-{topAlmostFullUpsell.closerDiscountPercent}%)
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => addToBasket(topAlmostFullUpsell.id, 1)}
+                      className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
+                    >
+                      + Add &amp; Waive Fee
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -390,10 +456,20 @@ export function BasketDrawer() {
                 <span>Basket Subtotal</span>
                 <span className="font-medium text-slate-900">{formatPence(subtotalPence)}</span>
               </div>
+              {hasAlmostFullItem && (
+                <div className="flex justify-between font-semibold text-emerald-700">
+                  <span>⚡ Closer Bonus (-{maxCloserPercent}%)</span>
+                  <span>-{formatPence(closerBonusSavedPence)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-slate-600">
                 <span>Small-Order Hub Fee</span>
                 <span className={feePence === 0 ? 'font-semibold text-emerald-700' : 'font-medium text-slate-900'}>
-                  {feePence === 0 ? '£0.00' : formatPence(feePence)}
+                  {feeWaivedByCloser && subtotalPence < thresholdPence
+                    ? '£0.00 — Waived by Closer Bonus! ⚡'
+                    : feePence === 0
+                      ? '£0.00'
+                      : formatPence(feePence)}
                 </span>
               </div>
               <div className="flex justify-between font-semibold text-emerald-700">
