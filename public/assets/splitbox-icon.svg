@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%" role="img" aria-label="SplitBox App Icon">
+  <defs>
+    <clipPath id="icon-citrus-clip">
+      <circle cx="96" cy="108" r="52" />
+    </clipPath>
+  </defs>
+
+  <rect width="200" height="200" rx="40" fill="#F7FAF8" />
+
+  <g transform="translate(2, 0)">
+    <!-- Outer Rounded Square Crate ("Box") in Deep Forest Ink -->
+    <rect x="28" y="40" width="136" height="136" rx="28" fill="#FFFFFF" stroke="#0B241C" stroke-width="8" />
+
+    <!-- Tangerine Crate Bed Inside the Box -->
+    <rect x="38" y="50" width="116" height="116" rx="18" fill="#FF6B1A" />
+
+    <!-- Circular White Pith Ring -->
+    <circle cx="96" cy="108" r="56" fill="#FFFFFF" />
+
+    <!-- Segmented Citrus Wedges (Center at 96, 108) -->
+    <g clip-path="url(#icon-citrus-clip)">
+      <path d="M 96 108 L 66 52 L 96 52 Z" fill="#10D48E" />
+      <path d="M 96 108 L 40 78 L 66 52 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 40 108 L 40 78 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 40 138 L 40 108 Z" fill="#10D48E" />
+      <path d="M 96 108 L 66 164 L 40 138 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 96 164 L 66 164 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 126 164 L 96 164 Z" fill="#10D48E" />
+      <path d="M 96 108 L 152 138 L 126 164 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 152 108 L 152 138 Z" fill="#FF6B1A" />
+      <path d="M 96 108 L 152 78 L 152 108 Z" fill="#10D48E" />
+      <path d="M 96 108 L 96 52 L 152 78 Z" fill="#FFFFFF" />
+
+      <!-- Crisp White Pith Spokes -->
+      <line x1="96" y1="50" x2="96" y2="166" stroke="#FFFFFF" stroke-width="4.5" />
+      <line x1="38" y1="108" x2="154" y2="108" stroke="#FFFFFF" stroke-width="4.5" />
+      <line x1="46" y1="79" x2="146" y2="137" stroke="#FFFFFF" stroke-width="4.5" />
+      <line x1="67" y1="58" x2="125" y2="158" stroke="#FFFFFF" stroke-width="4.5" />
+      <line x1="146" y1="79" x2="46" y2="137" stroke="#FFFFFF" stroke-width="4.5" />
+      <line x1="125" y1="58" x2="67" y2="158" stroke="#FFFFFF" stroke-width="4.5" />
+    </g>
+
+    <!-- White Mask Knockout at Top-Right Box Corner for Popped Slice -->
+    <path d="M 96 108 L 116 30 L 182 68 Z" fill="#F7FAF8" />
+
+    <!-- Popped Top-Right Citrus Slice ("Your Claimed Split") -->
+    <g transform="translate(12, -14)">
+      <path d="M 92 98 L 114 28 A 74 74 0 0 1 168 68 Z" fill="#FF6B1A" />
+      <path d="M 111 36 A 65 65 0 0 1 160 72" fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" />
+      <line x1="92" y1="98" x2="141" y2="49" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" />
+    </g>
+
+    <!-- Botanical Spearmint Leaf crowning the Popped Slice -->
+    <g transform="translate(152, 8)">
+      <path d="M 0 32 C -2 12, 14 0, 32 0 C 32 18, 20 34, 0 32 Z" fill="#10D48E" />
+      <line x1="2" y1="30" x2="22" y2="10" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+      <line x1="11" y1="21" x2="10" y2="11" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+      <line x1="11" y1="21" x2="21" y2="22" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+    </g>
+  </g>
+</svg>
