@@ -16,12 +16,14 @@ interface SeedProductInput {
   aldiPricePence: number;
   aldiUnitLabel: string;
   wholesaleCaseCostPence: number;
+  eanBarcode: string;
+  shelfLifeWeeks: number;
 }
 
 /**
- * 12 realistic wholesale bulk staples across all 5 student grocery categories.
- * Every single item beats Aldi's retail unit price by 24%–31% while preserving
- * healthy positive wholesale case margin (`caseSize * sharePrice > wholesaleCaseCost`).
+ * 12 realistic wholesale bulk staples across all 5 student categories, complete
+ * with real UK EAN-13 barcodes and shelf-life durations (including 1 fresh 2-week
+ * bakery item to demonstrate `AUTO_REFUND` vs shelf-stable `SAFE_BUY_AHEAD`).
  */
 export const DEFAULT_PRODUCTS: SeedProductInput[] = [
   {
@@ -37,6 +39,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 849,
     aldiUnitLabel: 'Aldi 5kg Basmati equiv.',
     wholesaleCaseCostPence: 2200,
+    eanBarcode: '5011157010502',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-shin-ramyun-5pk',
@@ -51,6 +55,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 575,
     aldiUnitLabel: '5 × Korean ramen packs',
     wholesaleCaseCostPence: 1360,
+    eanBarcode: '8801043014809',
+    shelfLifeWeeks: 36,
   },
   {
     id: 'prod-indomie-10pk',
@@ -65,6 +71,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 490,
     aldiUnitLabel: '10 × instant noodle packs',
     wholesaleCaseCostPence: 1180,
+    eanBarcode: '0089686170924',
+    shelfLifeWeeks: 36,
   },
   {
     id: 'prod-monster-ultra-6pk',
@@ -79,6 +87,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 749,
     aldiUnitLabel: '6 × 500ml branded cans',
     wholesaleCaseCostPence: 1920,
+    eanBarcode: '5060335635266',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-oatly-barista-3pk',
@@ -93,6 +103,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 585,
     aldiUnitLabel: '3 × 1L Barista Oat cartons',
     wholesaleCaseCostPence: 760,
+    eanBarcode: '7394376616228',
+    shelfLifeWeeks: 26,
   },
   {
     id: 'prod-trek-protein-4pk',
@@ -107,20 +119,24 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 399,
     aldiUnitLabel: 'Aldi 4-pack protein flapjacks',
     wholesaleCaseCostPence: 1020,
+    eanBarcode: '5060088707821',
+    shelfLifeWeeks: 26,
   },
   {
-    id: 'prod-grenade-oreo-3pk',
-    name: 'High-Protein Oreo White Bars',
-    brand: 'Grenade',
+    id: 'prod-fresh-protein-bagels',
+    name: 'Fresh Bakery Protein Thin Bagels',
+    brand: 'Warburtons',
     category: 'Protein & Snacks',
-    imageEmoji: '💪',
-    unitDescription: '3 × 60g bars (21g protein)',
-    caseDescription: '12 × 60g trade box (4 × 3-packs)',
+    imageEmoji: '🥯',
+    unitDescription: '2 × 4-bagel fresh bakery packs',
+    caseDescription: '8 × 4-pack fresh bakery tray (4 shares)',
     caseSize: 4,
-    sharePricePence: 425,
-    aldiPricePence: 599,
-    aldiUnitLabel: '3 × 60g high-protein bars',
-    wholesaleCaseCostPence: 1480,
+    sharePricePence: 295,
+    aldiPricePence: 398,
+    aldiUnitLabel: '2 × 4-pack protein bagels',
+    wholesaleCaseCostPence: 980,
+    eanBarcode: '5010044009085',
+    shelfLifeWeeks: 2, // Short 2-week bakery shelf life -> triggers AUTO_REFUND in Buy-Ahead Predictor!
   },
   {
     id: 'prod-nicky-toilet-9pk',
@@ -135,6 +151,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 369,
     aldiUnitLabel: 'Aldi Saxon 9-roll 3-ply',
     wholesaleCaseCostPence: 1150,
+    eanBarcode: '8004260454117',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-fairy-pods-27pk',
@@ -149,6 +167,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 649,
     aldiUnitLabel: '27-wash non-bio pods tub',
     wholesaleCaseCostPence: 1680,
+    eanBarcode: '8001841828121',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-finish-tabs-50pk',
@@ -163,6 +183,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 699,
     aldiUnitLabel: '50 all-in-1 dishwasher tabs',
     wholesaleCaseCostPence: 1380,
+    eanBarcode: '5011417572498',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-kikkoman-soy-500ml',
@@ -177,6 +199,8 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 395,
     aldiUnitLabel: '500ml brewed soy sauce equiv.',
     wholesaleCaseCostPence: 1440,
+    eanBarcode: '8715035110106',
+    shelfLifeWeeks: 52,
   },
   {
     id: 'prod-mutti-tomatoes-4pk',
@@ -191,14 +215,11 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiPricePence: 399,
     aldiUnitLabel: '4 × 400g Italian tomato tins',
     wholesaleCaseCostPence: 780,
+    eanBarcode: '8005110000188',
+    shelfLifeWeeks: 36,
   },
 ];
 
-/**
- * Seeds default campus hub settings, the 12 Aldi-beating bulk products, and
- * (by default) 3 realistic student hallmate orders so pools show 3/4, 2/4, 5/6
- * and 1 locked case right out of the box.
- */
 export function seedDatabase(
   db: DatabaseSync,
   options?: { includeDemoPools?: boolean }
@@ -234,8 +255,9 @@ export function seedDatabase(
       INSERT INTO products (
         id, name, brand, category, image_emoji, unit_description, case_description,
         case_size, share_price_pence, aldi_price_pence, aldi_unit_label,
-        wholesale_case_cost_pence, is_active, sort_order, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        wholesale_case_cost_pence, ean_barcode, shelf_life_weeks,
+        is_active, sort_order, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `);
 
     DEFAULT_PRODUCTS.forEach((p, idx) => {
@@ -252,10 +274,20 @@ export function seedDatabase(
         p.aldiPricePence,
         p.aldiUnitLabel,
         p.wholesaleCaseCostPence,
+        p.eanBarcode,
+        p.shelfLifeWeeks,
         idx,
         nowIso
       );
     });
+  } else {
+    // Backfill barcodes & shelf life if loading an earlier SQLite file
+    const backfillStmt = db.prepare(
+      "UPDATE products SET ean_barcode = ?, shelf_life_weeks = ? WHERE id = ? AND ean_barcode = ''"
+    );
+    for (const p of DEFAULT_PRODUCTS) {
+      backfillStmt.run(p.eanBarcode, p.shelfLifeWeeks, p.id);
+    }
   }
 
   if (!includeDemoPools) return;
@@ -282,16 +314,17 @@ export function seedDatabase(
         email: 'tom.hughes@student.bham.ac.uk',
         name: 'Tom Hughes',
         items: [
-          { productId: 'prod-basmati-5kg', quantity: 1 }, // -> Basmati now at 3/4!
-          { productId: 'prod-shin-ramyun-5pk', quantity: 3 }, // -> Shin Ramyun locks Box #1 + 2/4 in Box #2!
-          { productId: 'prod-monster-ultra-6pk', quantity: 2 }, // -> Monster at 2/4!
+          { productId: 'prod-basmati-5kg', quantity: 1 }, // -> Basmati 3/4 (10% Closer Bonus!)
+          { productId: 'prod-shin-ramyun-5pk', quantity: 3 }, // -> Shin Ramyun 1 locked + 2/4 open
+          { productId: 'prod-monster-ultra-6pk', quantity: 2 }, // -> Monster 2/4 (6% Closer Bonus!)
         ],
       },
       {
         email: 'zara.khan@student.bham.ac.uk',
         name: 'Zara Khan',
         items: [
-          { productId: 'prod-kikkoman-soy-500ml', quantity: 3 }, // -> Kikkoman at 5/6 (1 spot left)!
+          { productId: 'prod-kikkoman-soy-500ml', quantity: 3 }, // -> Kikkoman 5/6 (10% Closer Bonus!)
+          { productId: 'prod-fresh-protein-bagels', quantity: 1 }, // -> 1/4 on 2w fresh bakery -> AUTO_REFUND demo!
         ],
       },
     ];

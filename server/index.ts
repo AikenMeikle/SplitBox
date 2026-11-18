@@ -45,11 +45,11 @@ import {
   retrieveStripeCheckoutSession,
   verifyStripeWebhookEvent,
 } from './services/stripeService.ts';
+import {
+  createWholesalePurchaseOrder,
+  searchLiveWholesaleCatalog,
+} from './services/wholesaleApi.ts';
 
-/**
- * Builds the Express API + static SPA server wired to a `DatabaseSync` instance.
- * Exported as a factory so `tests/backend.test.ts` can test isolated SQLite DBs.
- */
 export function createApp(db: DatabaseSync): express.Express {
   const app = express();
   const sseHub = new SseHub();
@@ -236,7 +236,7 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json({ order });
   });
 
-  // --- Admin Dashboard, Wholesale Cutoff, Product CRUD & Hub Scanner ---
+  // --- Admin Dashboard, Buy-Ahead Cutoff, Live Wholesale API & Scanner ---
 
   app.get('/api/admin/summary', (req, res) => {
     requireAdmin(req);
@@ -272,7 +272,10 @@ export function createApp(db: DatabaseSync): express.Express {
 
   app.post('/api/admin/cutoff', async (req, res) => {
     requireAdmin(req);
-    const summary = await runWeeklyCutoff(db);
+    const { buyAheadProductIds } = (req.body ?? {}) as { buyAheadProductIds?: string[] };
+    const summary = await runWeeklyCutoff(db, {
+      buyAheadProductIds: Array.isArray(buyAheadProductIds) ? buyAheadProductIds : [],
+    });
     sseHub.broadcast('drop_updated');
     sseHub.broadcast('pool_updated');
     res.json(summary);
@@ -284,6 +287,26 @@ export function createApp(db: DatabaseSync): express.Express {
     sseHub.broadcast('drop_updated');
     sseHub.broadcast('pool_updated');
     res.json(summary);
+  });
+
+  app.get('/api/admin/wholesale/search', async (req, res) => {
+    requireAdmin(req);
+    const results = await searchLiveWholesaleCatalog(String(req.query.q ?? ''));
+    res.json({ results });
+  });
+
+  app.post('/api/admin/wholesale/order', async (req, res) => {
+    requireAdmin(req);
+    const { includeBuyAheadProductIds } = (req.body ?? {}) as {
+      includeBuyAheadProductIds?: string[];
+    };
+    const po = await createWholesalePurchaseOrder(db, {
+      includeBuyAheadProductIds: Array.isArray(includeBuyAheadProductIds)
+        ? includeBuyAheadProductIds
+        : [],
+    });
+    const summary = getAdminSummary(db);
+    res.json({ ...po, order: po, wholesaleOrder: po, ...summary });
   });
 
   app.post('/api/admin/products', (req, res) => {
@@ -303,8 +326,9 @@ export function createApp(db: DatabaseSync): express.Express {
       INSERT INTO products (
         id, name, brand, category, image_emoji, unit_description, case_description,
         case_size, share_price_pence, aldi_price_pence, aldi_unit_label,
-        wholesale_case_cost_pence, is_active, sort_order, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        wholesale_case_cost_pence, ean_barcode, supplier_sku, supplier_name,
+        shelf_life_weeks, carryover_stock_slots, is_active, sort_order, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       name,
@@ -318,6 +342,11 @@ export function createApp(db: DatabaseSync): express.Express {
       Math.max(0, Math.round(Number(b.aldiPricePence ?? 0))),
       String(b.aldiUnitLabel || 'Aldi equiv.'),
       Math.max(0, Math.round(Number(b.wholesaleCaseCostPence ?? 0))),
+      String(b.eanBarcode ?? '').trim(),
+      String(b.supplierSku ?? '').trim(),
+      String(b.supplierName ?? 'Qogita / Booker UK').trim(),
+      Math.max(1, Math.round(Number(b.shelfLifeWeeks ?? 26))),
+      Math.max(0, Math.round(Number(b.carryoverStockSlots ?? 0))),
       b.isActive === false ? 0 : 1,
       Number(sortRow.next_sort),
       new Date().toISOString()
@@ -340,7 +369,8 @@ export function createApp(db: DatabaseSync): express.Express {
       UPDATE products
       SET name = ?, brand = ?, category = ?, image_emoji = ?, unit_description = ?, case_description = ?,
           case_size = ?, share_price_pence = ?, aldi_price_pence = ?, aldi_unit_label = ?,
-          wholesale_case_cost_pence = ?, is_active = ?
+          wholesale_case_cost_pence = ?, ean_barcode = ?, supplier_sku = ?, supplier_name = ?,
+          shelf_life_weeks = ?, carryover_stock_slots = ?, is_active = ?
       WHERE id = ?
     `).run(
       p.name !== undefined ? String(p.name).trim() : String(ex.name),
@@ -356,6 +386,15 @@ export function createApp(db: DatabaseSync): express.Express {
       p.wholesaleCaseCostPence !== undefined
         ? Math.max(0, Math.round(Number(p.wholesaleCaseCostPence)))
         : Number(ex.wholesale_case_cost_pence),
+      p.eanBarcode !== undefined ? String(p.eanBarcode).trim() : String(ex.ean_barcode || ''),
+      p.supplierSku !== undefined ? String(p.supplierSku).trim() : String(ex.supplier_sku || ''),
+      p.supplierName !== undefined ? String(p.supplierName).trim() : String(ex.supplier_name || 'Qogita / Booker UK'),
+      p.shelfLifeWeeks !== undefined
+        ? Math.max(1, Math.round(Number(p.shelfLifeWeeks)))
+        : Number(ex.shelf_life_weeks || 26),
+      p.carryoverStockSlots !== undefined
+        ? Math.max(0, Math.round(Number(p.carryoverStockSlots)))
+        : Number(ex.carryover_stock_slots || 0),
       p.isActive !== undefined ? (p.isActive ? 1 : 0) : Number(ex.is_active),
       id
     );
@@ -406,7 +445,6 @@ export function createApp(db: DatabaseSync): express.Express {
     res.status(404).json({ error: 'API endpoint not found.' });
   });
 
-  // Production static SPA serving (`dist/` built by Vite)
   const distDir = path.resolve(process.cwd(), 'dist');
   const indexHtmlPath = path.join(distDir, 'index.html');
   if (fs.existsSync(indexHtmlPath)) {
@@ -420,7 +458,6 @@ export function createApp(db: DatabaseSync): express.Express {
     });
   }
 
-  // Centralized JSON error handler
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const status = err instanceof HttpError ? err.status : 500;
     const message = err instanceof Error ? err.message : 'Unexpected server error.';

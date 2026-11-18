@@ -17,6 +17,8 @@ export type DropStatus = 'open' | 'closed';
 export type AllocationStatus = 'pooling' | 'locked_box' | 'fulfilled' | 'auto_refunded';
 export type OrderStatus = 'pending_payment' | 'paid_pooling' | 'settled' | 'refunded' | 'collected';
 
+export type BuyAheadDecision = 'SAFE_BUY_AHEAD' | 'BORDERLINE_REVIEW' | 'AUTO_REFUND';
+
 export interface DropSettings {
   hubName: string;
   hubShortLabel: string;
@@ -43,6 +45,11 @@ export interface Product {
   aldiUnitLabel: string;
   wholesaleCaseCostPence: number;
   isActive: boolean;
+  eanBarcode?: string;
+  supplierSku?: string;
+  supplierName?: string;
+  shelfLifeWeeks?: number;
+  carryoverStockSlots?: number;
 }
 
 export interface ProductWithPool extends Product {
@@ -52,6 +59,12 @@ export interface ProductWithPool extends Product {
   openCaseRemainingSlots: number;
   currentCaseNumber: number;
   savingsPercent: number;
+  fillRatio: number;
+  isAlmostFull: boolean;
+  closerDiscountPercent: number;
+  closerDiscountPence: number;
+  effectiveSharePricePence: number;
+  waivesSmallOrderFee: boolean;
 }
 
 export interface AuthUser {
@@ -89,6 +102,7 @@ export interface Order {
   refundedPence: number;
   netChargedPence: number;
   totalAldiComparisonPence: number;
+  closerDiscountTotalPence?: number;
   pickupCode: string;
   pickupPin: string;
   qrToken: string;
@@ -114,10 +128,74 @@ export interface WholesaleShoppingLine {
   grossProfitPence: number;
 }
 
+export interface BuyAheadPrediction {
+  productId: string;
+  productName: string;
+  brand: string;
+  imageEmoji: string;
+  caseSize: number;
+  openCaseClaimedSlots: number;
+  unsoldSlotsCount: number;
+  shelfLifeWeeks: number;
+  safeHorizonWeeks: number;
+  estimatedWeeklyDemand: number;
+  sellThroughProbability: number;
+  wholesaleCaseCostPence: number;
+  immediateStudentCashPence: number;
+  upfrontCashCoverageRatio: number;
+  netOutOfPocketFloatPence: number;
+  expectedNetProfitPence: number;
+  safetyScore: number;
+  decision: BuyAheadDecision;
+  explanation: string;
+}
+
+export interface LiveSupplierProductResult {
+  externalId: string;
+  eanBarcode: string;
+  name: string;
+  brand: string;
+  packSizeLabel: string;
+  imageUrl: string | null;
+  category: ProductCategory;
+  suggestedCaseSize: number;
+  estimatedWholesaleCaseCostPence: number;
+  suggestedSharePricePence: number;
+  estimatedAldiPricePence: number;
+  shelfLifeWeeks: number;
+  source: 'qogita_live' | 'openfoodfacts_uk_live';
+  supplierPortalUrl: string;
+}
+
+export interface WholesalePurchaseOrder {
+  id: string;
+  dropCycleNumber: number;
+  supplierName: string;
+  mode: 'qogita_api_live' | 'webhook_edi_live' | 'manual_portal_assisted';
+  externalOrderRef: string;
+  status: 'submitted' | 'confirmed' | 'draft_ready';
+  totalCasesCount: number;
+  totalSpendPence: number;
+  createdAt: string;
+  portalLinks: Array<{
+    productId: string;
+    productName: string;
+    eanBarcode: string;
+    casesToBuy: number;
+    lineCostPence: number;
+    qogitaUrl: string;
+    bookerUrl: string;
+    bestwayUrl: string;
+  }>;
+}
+
 export interface AdminSummary {
   settings: DropSettings;
   products: ProductWithPool[];
   shoppingList: WholesaleShoppingLine[];
+  buyAheadPredictions: BuyAheadPrediction[];
+  wholesaleOrders: WholesalePurchaseOrder[];
+  wholesaleApiConfigured: boolean;
   orders: Order[];
   totals: {
     totalOrdersCount: number;

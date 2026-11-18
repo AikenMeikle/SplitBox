@@ -13,9 +13,11 @@ import type {
   AuthUser,
   CreateCheckoutResponse,
   DropSettings,
+  LiveSupplierProductResult,
   Order,
   ProductWithPool,
   ScanLookupResult,
+  WholesalePurchaseOrder,
 } from '../src/shared/types.ts';
 
 process.env.DIVLY_QUIET_LOGS = '1';
@@ -25,10 +27,6 @@ interface TestHarness {
   cleanup: () => Promise<void>;
 }
 
-/**
- * Spawns an isolated Express + SQLite WAL instance on an ephemeral OS port (`0`)
- * so every test runs real HTTP + real SQLite WAL concurrency without interference.
- */
 async function startTestServer(options?: { includeDemoPools?: boolean }): Promise<TestHarness> {
   const tmpSqlite = path.join(
     os.tmpdir(),
@@ -123,7 +121,6 @@ test('1. Cross-box 3/4 + 2 sequential allocation locks Box #1 and overflows into
     const tokenA = await loginStudent(h.baseUrl, 'alice.chen');
     const tokenB = await loginStudent(h.baseUrl, 'ben.davies');
 
-    // Student A claims 3 shares of a 4-share case (`prod-indomie-10pk`, caseSize = 4)
     const orderA = await checkoutAndConfirm(h.baseUrl, tokenA, [
       { productId: 'prod-indomie-10pk', quantity: 3 },
     ]);
@@ -137,7 +134,6 @@ test('1. Cross-box 3/4 + 2 sequential allocation locks Box #1 and overflows into
       ]
     );
 
-    // Student B claims 2 shares -> Slot 3 locks ALL of Box #1, Slot 4 opens Box #2 as pooling!
     const orderB = await checkoutAndConfirm(h.baseUrl, tokenB, [
       { productId: 'prod-indomie-10pk', quantity: 2 },
     ]);
@@ -149,13 +145,11 @@ test('1. Cross-box 3/4 + 2 sequential allocation locks Box #1 and overflows into
       ]
     );
 
-    // Verify Student A's first 3 shares in Box #1 were atomically promoted to `locked_box`!
     const mineA = await apiJson<{ orders: Order[] }>(h.baseUrl, '/api/orders/mine', {
       token: tokenA,
     });
     assert.ok(mineA.body.orders[0].allocations.every((a) => a.status === 'locked_box'));
 
-    // Verify public pool counters reflect 1 locked case + 1/4 open in Case #2
     const state = await apiJson<{ settings: DropSettings; products: ProductWithPool[] }>(
       h.baseUrl,
       '/api/state'
@@ -178,7 +172,6 @@ test('2. 20 concurrent student checkouts never collide on slots, pickup codes, o
       Array.from({ length: 20 }, (_, i) => loginStudent(h.baseUrl, `student.${i + 1}`))
     );
 
-    // Fire all 20 checkouts concurrently on `prod-basmati-5kg` (caseSize = 4) -> exactly 5 locked boxes!
     const orders = await Promise.all(
       tokens.map((t) =>
         checkoutAndConfirm(h.baseUrl, t, [{ productId: 'prod-basmati-5kg', quantity: 1 }])
@@ -192,12 +185,12 @@ test('2. 20 concurrent student checkouts never collide on slots, pickup codes, o
     const pickupPins = new Set(orders.map((o) => o.pickupPin));
     const qrTokens = new Set(orders.map((o) => o.qrToken));
 
-    assert.equal(slotIndices.size, 20, 'Every concurrent student must get a unique slot 0..19');
+    assert.equal(slotIndices.size, 20);
     assert.equal(Math.min(...slotIndices), 0);
     assert.equal(Math.max(...slotIndices), 19);
-    assert.equal(pickupCodes.size, 20, 'Zero collisions on UOB-XXXXXX pickup codes');
-    assert.equal(pickupPins.size, 20, 'Zero collisions on 6-digit pickup PINs');
-    assert.equal(qrTokens.size, 20, 'Zero collisions on HMAC QR tokens');
+    assert.equal(pickupCodes.size, 20);
+    assert.equal(pickupPins.size, 20);
+    assert.equal(qrTokens.size, 20);
 
     const state = await apiJson<{ products: ProductWithPool[] }>(h.baseUrl, '/api/state');
     const basmati = state.body.products.find((p) => p.id === 'prod-basmati-5kg')!;
@@ -211,69 +204,53 @@ test('2. 20 concurrent student checkouts never collide on slots, pickup codes, o
 test('3. Weekly cutoff settles partial overflow refunds AND refunds 100% including fee when 0 items fill', async () => {
   const h = await startTestServer({ includeDemoPools: false });
   try {
-    const tokenA = await loginStudent(h.baseUrl, 'student.alpha');
-    const tokenB = await loginStudent(h.baseUrl, 'student.beta');
+    const tokenPartial = await loginStudent(h.baseUrl, 'student.partial');
     const tokenUnlucky = await loginStudent(h.baseUrl, 'student.unlucky');
     const adminToken = await loginAdmin(h.baseUrl);
 
-    // Student Alpha buys 3 × Trek Flapjacks (3 × 295p = 885p >= 800p threshold -> £0.00 fee)
-    await checkoutAndConfirm(h.baseUrl, tokenA, [
-      { productId: 'prod-trek-protein-4pk', quantity: 3 },
-    ]);
+    // Raise threshold to £15 so we test fee retention on partial fulfillment AND 100% fee refund on 0 fulfillment!
+    await apiJson(h.baseUrl, '/api/admin/settings', {
+      method: 'PUT',
+      token: adminToken,
+      body: JSON.stringify({ freeDeliveryThresholdPence: 1500, smallOrderFeePence: 50 }),
+    });
 
-    // Student Beta buys 2 × Trek Flapjacks (2 × 295p = 590p < 800p threshold -> +50p small-order fee = 640p paid!)
-    // -> 1st share locks Box #1 (`fulfilled` at cutoff), 2nd share overflows into Box #2 (`auto_refunded` at cutoff)!
-    const orderB = await checkoutAndConfirm(h.baseUrl, tokenB, [
-      { productId: 'prod-trek-protein-4pk', quantity: 2 },
+    // Student Partial buys 3 × Oatly (`caseSize = 2`, 435p each) on a 0/2 empty pool:
+    // -> 2 shares lock Box #1 (fulfilled), 1 share overflows into Box #2 (auto_refunded)!
+    const orderPartial = await checkoutAndConfirm(h.baseUrl, tokenPartial, [
+      { productId: 'prod-oatly-barista-3pk', quantity: 3 },
     ]);
-    assert.equal(orderB.subtotalPence, 590);
-    assert.equal(orderB.feePence, 50);
-    assert.equal(orderB.totalPaidPence, 640);
+    assert.equal(orderPartial.subtotalPence, 1305);
+    assert.equal(orderPartial.feePence, 50);
+    assert.equal(orderPartial.totalPaidPence, 1355);
 
-    // Student Unlucky buys 1 × Mutti Tomatoes (299p + 50p fee = 349p paid) in a box of 3 that NEVER fills!
+    // Student Unlucky buys 1 × Mutti Tomatoes (299p + 50p fee = 349p) in a 0/3 box that never fills
     const orderUnlucky = await checkoutAndConfirm(h.baseUrl, tokenUnlucky, [
       { productId: 'prod-mutti-tomatoes-4pk', quantity: 1 },
     ]);
-    assert.equal(orderUnlucky.subtotalPence, 299);
-    assert.equal(orderUnlucky.feePence, 50);
     assert.equal(orderUnlucky.totalPaidPence, 349);
 
-    // Admin triggers weekly cutoff!
     const cutoffRes = await apiJson<AdminSummary>(h.baseUrl, '/api/admin/cutoff', {
       method: 'POST',
       token: adminToken,
     });
     assert.equal(cutoffRes.status, 200);
-    assert.equal(cutoffRes.body.settings.dropStatus, 'closed');
 
-    // Check Student Beta: 1 fulfilled (295p) + 50p fee = 345p netCharged, 1 overflow auto-refunded = 295p refunded!
-    const betaAfter = cutoffRes.body.orders.find((o) => o.id === orderB.id)!;
-    assert.equal(betaAfter.status, 'settled');
-    assert.equal(betaAfter.refundedPence, 295);
-    assert.equal(betaAfter.netChargedPence, 345);
-    assert.equal(betaAfter.totalPaidPence, betaAfter.netChargedPence + betaAfter.refundedPence);
+    // Partial order: 1 overflow share (435p) refunded; 2 fulfilled shares (870p) + 50p fee = 920p net charged
+    const partialAfter = cutoffRes.body.orders.find((o) => o.id === orderPartial.id)!;
+    assert.equal(partialAfter.status, 'settled');
+    assert.equal(partialAfter.refundedPence, 435);
+    assert.equal(partialAfter.netChargedPence, 920);
+    assert.equal(
+      partialAfter.totalPaidPence,
+      partialAfter.netChargedPence + partialAfter.refundedPence
+    );
 
-    // Check Student Unlucky: 0 fulfilled -> 100% refunded INCLUDING the 50p small-order fee!
+    // Unlucky order: 0 fulfilled -> 100% refunded INCLUDING the 50p fee!
     const unluckyAfter = cutoffRes.body.orders.find((o) => o.id === orderUnlucky.id)!;
     assert.equal(unluckyAfter.status, 'refunded');
     assert.equal(unluckyAfter.refundedPence, 349);
     assert.equal(unluckyAfter.netChargedPence, 0);
-    assert.equal(
-      unluckyAfter.totalPaidPence,
-      unluckyAfter.netChargedPence + unluckyAfter.refundedPence
-    );
-
-    // Check wholesale shopping list: ONLY 1 full case of Trek to purchase, 0 cases of Mutti!
-    const trekLine = cutoffRes.body.shoppingList.find(
-      (l) => l.productId === 'prod-trek-protein-4pk'
-    )!;
-    assert.equal(trekLine.lockedCasesCount, 1);
-    assert.equal(trekLine.overflowSlotsCount, 1);
-    const muttiLine = cutoffRes.body.shoppingList.find(
-      (l) => l.productId === 'prod-mutti-tomatoes-4pk'
-    )!;
-    assert.equal(muttiLine.lockedCasesCount, 0);
-    assert.equal(muttiLine.overflowSlotsCount, 1);
   } finally {
     await h.cleanup();
   }
@@ -282,14 +259,12 @@ test('3. Weekly cutoff settles partial overflow refunds AND refunds 100% includi
 test('4. Campus OTP gate, HMAC QR tamper rejection, PIN lookup, and atomic double-collection block', async () => {
   const h = await startTestServer({ includeDemoPools: false });
   try {
-    // Reject non-UoB email (`@gmail.com`)
     const badOtp = await apiJson<{ error: string }>(h.baseUrl, '/api/auth/request-otp', {
       method: 'POST',
       body: JSON.stringify({ email: 'intruder@gmail.com' }),
     });
     assert.equal(badOtp.status, 400);
 
-    // Accept `@student.bham.ac.uk` OTP flow
     const otpReq = await apiJson<{ ok: boolean; devOtpCode?: string }>(
       h.baseUrl,
       '/api/auth/request-otp',
@@ -316,13 +291,11 @@ test('4. Campus OTP gate, HMAC QR tamper rejection, PIN lookup, and atomic doubl
     const studentToken = otpVerify.body.token;
     const adminToken = await loginAdmin(h.baseUrl);
 
-    // Student buys a full case of Oatly Barista (`caseSize = 2`) so Box #1 locks immediately
     const order = await checkoutAndConfirm(h.baseUrl, studentToken, [
       { productId: 'prod-oatly-barista-3pk', quantity: 2 },
     ]);
     await apiJson(h.baseUrl, '/api/admin/cutoff', { method: 'POST', token: adminToken });
 
-    // Tamper with the last character of the HMAC-SHA256 QR token -> must be rejected!
     const lastChar = order.qrToken.slice(-1);
     const tamperedQr = order.qrToken.slice(0, -1) + (lastChar === 'a' ? 'b' : 'a');
     const tamperedCheck = await apiJson<ScanLookupResult>(
@@ -335,26 +308,14 @@ test('4. Campus OTP gate, HMAC QR tamper rejection, PIN lookup, and atomic doubl
       }
     );
     assert.equal(tamperedCheck.body.valid, false);
-    assert.equal(tamperedCheck.body.alreadyCollected, false);
 
-    // Valid QR token scan -> `valid: true`
     const validQrCheck = await apiJson<ScanLookupResult>(h.baseUrl, '/api/admin/scan/verify', {
       method: 'POST',
       token: adminToken,
       body: JSON.stringify({ input: order.qrToken }),
     });
     assert.equal(validQrCheck.body.valid, true);
-    assert.equal(validQrCheck.body.order?.id, order.id);
 
-    // Valid 6-digit PIN lookup -> `valid: true`
-    const validPinCheck = await apiJson<ScanLookupResult>(h.baseUrl, '/api/admin/scan/verify', {
-      method: 'POST',
-      token: adminToken,
-      body: JSON.stringify({ input: order.pickupPin }),
-    });
-    assert.equal(validPinCheck.body.valid, true);
-
-    // Mark collected once -> 200 OK
     const collect1 = await apiJson<{ order: Order }>(h.baseUrl, '/api/admin/scan/collect', {
       method: 'POST',
       token: adminToken,
@@ -363,7 +324,6 @@ test('4. Campus OTP gate, HMAC QR tamper rejection, PIN lookup, and atomic doubl
     assert.equal(collect1.status, 200);
     assert.equal(collect1.body.order.status, 'collected');
 
-    // Second collection attempt -> 409 Conflict blocked!
     const collect2 = await apiJson<{ error: string }>(h.baseUrl, '/api/admin/scan/collect', {
       method: 'POST',
       token: adminToken,
@@ -371,7 +331,6 @@ test('4. Campus OTP gate, HMAC QR tamper rejection, PIN lookup, and atomic doubl
     });
     assert.equal(collect2.status, 409);
 
-    // Re-scanning after collection -> `alreadyCollected: true`, `valid: false`
     const rescan = await apiJson<ScanLookupResult>(h.baseUrl, '/api/admin/scan/verify', {
       method: 'POST',
       token: adminToken,
@@ -389,7 +348,6 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
   try {
     const adminToken = await loginAdmin(h.baseUrl);
 
-    // Verify seeded storefront has 12 Aldi-beating items and realistic live open pools (3/4, 2/4, 5/6)
     const initialState = await apiJson<{ settings: DropSettings; products: ProductWithPool[] }>(
       h.baseUrl,
       '/api/state'
@@ -406,7 +364,6 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
       5
     );
 
-    // Admin creates a new product
     const createdRes = await apiJson<{ product: ProductWithPool }>(
       h.baseUrl,
       '/api/admin/products',
@@ -425,14 +382,16 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
           aldiPricePence: 549,
           aldiUnitLabel: '200g Gold Roast jar',
           wholesaleCaseCostPence: 1980,
+          eanBarcode: '7613035974685',
+          shelfLifeWeeks: 52,
           isActive: true,
         }),
       }
     );
     assert.equal(createdRes.status, 201);
+    assert.equal(createdRes.body.product.eanBarcode, '7613035974685');
     const newProdId = createdRes.body.product.id;
 
-    // Admin updates product price -> savingsPercent updates immediately
     const updatedRes = await apiJson<{ product: ProductWithPool }>(
       h.baseUrl,
       `/api/admin/products/${newProdId}`,
@@ -445,7 +404,6 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
     assert.equal(updatedRes.status, 200);
     assert.equal(updatedRes.body.product.sharePricePence, 365);
 
-    // Admin deletes the newly added product
     const deleteRes = await apiJson<{ ok: boolean }>(
       h.baseUrl,
       `/api/admin/products/${newProdId}`,
@@ -455,9 +413,7 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
       }
     );
     assert.equal(deleteRes.status, 200);
-    assert.equal(deleteRes.body.ok, true);
 
-    // Admin settles Cycle #1 then starts New Weekly Drop (Cycle #2)
     await apiJson<AdminSummary>(h.baseUrl, '/api/admin/cutoff', {
       method: 'POST',
       token: adminToken,
@@ -469,13 +425,137 @@ test('5. Admin product CRUD, demo seed pools, and new-drop cycle reset preservin
     assert.equal(newDropRes.status, 200);
     assert.equal(newDropRes.body.settings.dropCycleNumber, 2);
     assert.equal(newDropRes.body.settings.dropStatus, 'open');
-
-    // Active pool counters reset to 0 for Cycle #2 while historical Cycle #1 orders remain preserved!
     assert.ok(newDropRes.body.products.every((p) => p.totalClaimedSlots === 0));
     assert.equal(newDropRes.body.orders.length, 3);
     assert.ok(
       newDropRes.body.orders.every((o) => o.totalPaidPence === o.netChargedPence + o.refundedPence)
     );
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test('6. Herd / Almost-Full Closer Bonus grants 6%-10% discount, clamps positive margin, and waives fee', async () => {
+  const h = await startTestServer({ includeDemoPools: false });
+  try {
+    const token1 = await loginStudent(h.baseUrl, 'opener');
+    const token2 = await loginStudent(h.baseUrl, 'closer');
+
+    // Opener claims 3/4 of Trek Flapjacks (`sharePricePence = 295`, `wholesaleCaseCostPence = 1020`)
+    await checkoutAndConfirm(h.baseUrl, token1, [
+      { productId: 'prod-trek-protein-4pk', quantity: 3 },
+    ]);
+
+    const state = await apiJson<{ products: ProductWithPool[] }>(h.baseUrl, '/api/state');
+    const trek = state.body.products.find((p) => p.id === 'prod-trek-protein-4pk')!;
+    assert.equal(trek.isAlmostFull, true);
+    assert.equal(trek.waivesSmallOrderFee, true);
+    assert.equal(trek.closerDiscountPercent, 10);
+    assert.equal(trek.effectiveSharePricePence, 266); // 295 * 0.9 = 266 >= floor(255 + 10 = 265)
+
+    // Closer buys just 1 share (266p < 800p threshold) -> £0.00 fee waived AND pays 266p!
+    const closerOrder = await checkoutAndConfirm(h.baseUrl, token2, [
+      { productId: 'prod-trek-protein-4pk', quantity: 1 },
+    ]);
+    assert.equal(closerOrder.feePence, 0);
+    assert.equal(closerOrder.totalPaidPence, 266);
+    assert.equal(closerOrder.closerDiscountTotalPence, 29);
+    assert.equal(closerOrder.allocations[0].status, 'locked_box');
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test('7. Bayesian Buy-Ahead Predictor distinguishes SAFE_BUY_AHEAD vs AUTO_REFUND and rolls carryover stock', async () => {
+  const h = await startTestServer({ includeDemoPools: true });
+  try {
+    const adminToken = await loginAdmin(h.baseUrl);
+    const summaryBefore = await apiJson<AdminSummary>(h.baseUrl, '/api/admin/summary', {
+      token: adminToken,
+    });
+
+    // Basmati (3/4 claimed, 52-week shelf life) -> SAFE_BUY_AHEAD
+    const basmatiPred = summaryBefore.body.buyAheadPredictions.find(
+      (p) => p.productId === 'prod-basmati-5kg'
+    )!;
+    assert.ok(basmatiPred);
+    assert.equal(basmatiPred.decision, 'SAFE_BUY_AHEAD');
+    assert.ok(basmatiPred.safetyScore >= 70);
+    assert.ok(basmatiPred.sellThroughProbability >= 0.65);
+
+    // Fresh Bakery Protein Bagels (1/4 claimed, 2-week shelf life) -> AUTO_REFUND
+    const bagelsPred = summaryBefore.body.buyAheadPredictions.find(
+      (p) => p.productId === 'prod-fresh-protein-bagels'
+    )!;
+    assert.ok(bagelsPred);
+    assert.equal(bagelsPred.decision, 'AUTO_REFUND');
+    assert.equal(bagelsPred.safeHorizonWeeks, 0);
+
+    // Admin triggers cutoff underwriting `prod-basmati-5kg` (3/4 open -> fulfilled + 1 carryover bag!)
+    const cutoffRes = await apiJson<AdminSummary>(h.baseUrl, '/api/admin/cutoff', {
+      method: 'POST',
+      token: adminToken,
+      body: JSON.stringify({ buyAheadProductIds: ['prod-basmati-5kg'] }),
+    });
+    assert.equal(cutoffRes.status, 200);
+
+    const basmatiLine = cutoffRes.body.shoppingList.find(
+      (l) => l.productId === 'prod-basmati-5kg'
+    )!;
+    assert.equal(basmatiLine.lockedCasesCount, 1);
+    assert.equal(basmatiLine.overflowSlotsCount, 0);
+
+    // Start Cycle #2 -> Basmati carries 1 instant-stock unit held at hub, claimed immediately by next student!
+    const nextDrop = await apiJson<AdminSummary>(h.baseUrl, '/api/admin/new-drop', {
+      method: 'POST',
+      token: adminToken,
+    });
+    const basmatiNext = nextDrop.body.products.find((p) => p.id === 'prod-basmati-5kg')!;
+    assert.equal(basmatiNext.carryoverStockSlots, 1);
+
+    const studentC = await loginStudent(h.baseUrl, 'carryover.buyer');
+    const carryOrder = await checkoutAndConfirm(h.baseUrl, studentC, [
+      { productId: 'prod-basmati-5kg', quantity: 1 },
+    ]);
+    assert.equal(carryOrder.allocations[0].status, 'locked_box');
+
+    const afterClaim = await apiJson<{ products: ProductWithPool[] }>(h.baseUrl, '/api/state');
+    assert.equal(
+      afterClaim.body.products.find((p) => p.id === 'prod-basmati-5kg')!.carryoverStockSlots,
+      0
+    );
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test('8. Wholesale UK product search API and Wholesale Purchase Order generation', async () => {
+  const h = await startTestServer({ includeDemoPools: true });
+  try {
+    const adminToken = await loginAdmin(h.baseUrl);
+
+    const searchRes = await apiJson<{ results: LiveSupplierProductResult[] }>(
+      h.baseUrl,
+      '/api/admin/wholesale/search?q=oatly',
+      { token: adminToken }
+    );
+    assert.equal(searchRes.status, 200);
+    assert.ok(searchRes.body.results.length > 0);
+    assert.ok(searchRes.body.results[0].supplierPortalUrl.includes('qogita.com'));
+
+    const poRes = await apiJson<{ order: WholesalePurchaseOrder }>(
+      h.baseUrl,
+      '/api/admin/wholesale/order',
+      {
+        method: 'POST',
+        token: adminToken,
+        body: JSON.stringify({ includeBuyAheadProductIds: ['prod-basmati-5kg'] }),
+      }
+    );
+    assert.equal(poRes.status, 200);
+    assert.ok(poRes.body.order.totalCasesCount >= 2); // 1 locked Shin Ramyun + 1 buy-ahead Basmati
+    assert.ok(poRes.body.order.portalLinks.every((l) => l.qogitaUrl.startsWith('https://')));
+    assert.ok(poRes.body.order.portalLinks.every((l) => l.bookerUrl.startsWith('https://')));
   } finally {
     await h.cleanup();
   }

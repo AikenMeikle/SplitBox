@@ -7,7 +7,9 @@ import {
   HttpError,
   runImmediateTransaction,
 } from '../db.ts';
+import { computeBuyAheadPredictions } from './buyAheadPredictor.ts';
 import { isStripeConfigured, issueStripeRefund } from './stripeService.ts';
+import { getWholesaleOrders, isWholesaleApiConfigured } from './wholesaleApi.ts';
 
 interface PendingStripeRefund {
   orderId: string;
@@ -17,19 +19,50 @@ interface PendingStripeRefund {
 
 /**
  * Settles a specific drop cycle inside a single SQLite transaction:
- *  - Every `locked_box` share becomes `fulfilled` (ready for Saturday hub pickup).
- *  - Every unfilled `pooling` share becomes `auto_refunded`.
- *  - Orders with 0 `fulfilled` shares get a 100% refund INCLUDING `feePence` (`status = 'refunded'`).
- *  - Orders with >= 1 `fulfilled` shares get exact `auto_refunded` shares refunded (`status = 'settled'`).
- *  - Strictly asserts `totalPaidPence === netChargedPence + refundedPence` on every order.
+ *  - Optional `buyAheadProductIds`: underwrites selected incomplete shelf-stable open
+ *    boxes (`pooling -> fulfilled`) and adds leftover unsold units to `carryover_stock_slots`!
+ *  - Every `locked_box` share becomes `fulfilled`.
+ *  - Remaining unfilled `pooling` shares become `auto_refunded`.
+ *  - Enforces `totalPaidPence === netChargedPence + refundedPence` on every order.
  */
-function settleDropCycleInTx(db: DatabaseSync, cycleNumber: number): PendingStripeRefund[] {
-  // Clean up any abandoned unpaid checkout sessions from this cycle.
+function settleDropCycleInTx(
+  db: DatabaseSync,
+  cycleNumber: number,
+  buyAheadProductIds: string[] = []
+): PendingStripeRefund[] {
   db.prepare(
     "DELETE FROM orders WHERE drop_cycle_number = ? AND status = 'pending_payment'"
   ).run(cycleNumber);
 
-  // Promote 100% filled boxes -> fulfilled, and mark overflow slots -> auto_refunded.
+  // 1. Underwritefounder-approved incomplete open boxes (Buy-Ahead Rollover)
+  const uniqueBuyAheadIds = Array.from(new Set(buyAheadProductIds));
+  for (const productId of uniqueBuyAheadIds) {
+    const prod = db
+      .prepare('SELECT id, case_size FROM products WHERE id = ? AND deleted_at IS NULL')
+      .get(productId) as { id: string; case_size: number } | undefined;
+    if (!prod) continue;
+
+    const openRow = db
+      .prepare(
+        "SELECT COUNT(*) AS cnt FROM pool_allocations WHERE drop_cycle_number = ? AND product_id = ? AND status = 'pooling'"
+      )
+      .get(cycleNumber, productId) as { cnt: number };
+    const openCount = Number(openRow.cnt);
+
+    if (openCount > 0) {
+      const unsoldSlots = Math.max(0, Number(prod.case_size) - openCount);
+      db.prepare(
+        "UPDATE pool_allocations SET status = 'fulfilled' WHERE drop_cycle_number = ? AND product_id = ? AND status = 'pooling'"
+      ).run(cycleNumber, productId);
+      if (unsoldSlots > 0) {
+        db.prepare(
+          'UPDATE products SET carryover_stock_slots = carryover_stock_slots + ? WHERE id = ?'
+        ).run(unsoldSlots, productId);
+      }
+    }
+  }
+
+  // 2. Promote 100% locked boxes -> fulfilled; mark remaining incomplete boxes -> auto_refunded
   db.prepare(
     "UPDATE pool_allocations SET status = 'fulfilled' WHERE drop_cycle_number = ? AND status = 'locked_box'"
   ).run(cycleNumber);
@@ -74,12 +107,10 @@ function settleDropCycleInTx(db: DatabaseSync, cycleNumber: number): PendingStri
     let nextStatus = currentStatus;
 
     if (fulfilledCount === 0) {
-      // Zero items fulfilled -> refund 100% including any small-order fee!
       refundedPence = totalPaidPence;
       netChargedPence = 0;
       nextStatus = 'refunded';
     } else {
-      // At least 1 item fulfilled -> refund exact unfilled overflow shares.
       refundedPence = autoRefundedSharesPence;
       netChargedPence = totalPaidPence - refundedPence;
       nextStatus = currentStatus === 'collected' ? 'collected' : 'settled';
@@ -112,12 +143,15 @@ function settleDropCycleInTx(db: DatabaseSync, cycleNumber: number): PendingStri
   return stripeRefunds;
 }
 
-/** Closes the active weekly drop, settles all pools, and triggers any Stripe refunds. */
-export async function runWeeklyCutoff(db: DatabaseSync): Promise<AdminSummary> {
+/** Closes the active weekly drop, underwrites any chosen buy-ahead boxes, and settles refunds. */
+export async function runWeeklyCutoff(
+  db: DatabaseSync,
+  options?: { buyAheadProductIds?: string[] }
+): Promise<AdminSummary> {
   const stripeRefunds = runImmediateTransaction(db, () => {
     const settings = getSettings(db);
     db.prepare("UPDATE settings SET drop_status = 'closed' WHERE id = 1").run();
-    return settleDropCycleInTx(db, settings.dropCycleNumber);
+    return settleDropCycleInTx(db, settings.dropCycleNumber, options?.buyAheadProductIds ?? []);
   });
 
   if (isStripeConfigured() && stripeRefunds.length > 0) {
@@ -129,16 +163,11 @@ export async function runWeeklyCutoff(db: DatabaseSync): Promise<AdminSummary> {
   return getAdminSummary(db);
 }
 
-/**
- * Starts a brand-new weekly drop cycle:
- *  - Settles any unsettled shares in the outgoing cycle so historical orders stay clean.
- *  - Increments `dropCycleNumber`, sets `dropStatus = 'open'`, and pushes cutoff +7 days.
- *  - Preserves all historical student orders & passes in SQLite.
- */
+/** Starts the next weekly drop cycle while preserving historical orders and hub carryover stock. */
 export async function startNewDropCycle(db: DatabaseSync): Promise<AdminSummary> {
   const stripeRefunds = runImmediateTransaction(db, () => {
     const settings = getSettings(db);
-    const pendingRefunds = settleDropCycleInTx(db, settings.dropCycleNumber);
+    const pendingRefunds = settleDropCycleInTx(db, settings.dropCycleNumber, []);
 
     const nextCycle = settings.dropCycleNumber + 1;
     const nextCutoffIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -163,15 +192,12 @@ export async function startNewDropCycle(db: DatabaseSync): Promise<AdminSummary>
   return getAdminSummary(db);
 }
 
-/**
- * Computes the complete `AdminSummary` for the founder dashboard:
- *  - Current drop settings & all non-deleted products
- *  - Exact wholesale shopping list (ONLY 100% locked/fulfilled cases to purchase)
- *  - All paid student orders (newest first) + cycle unit-economics KPIs
- */
 export function getAdminSummary(db: DatabaseSync): AdminSummary {
   const settings = getSettings(db);
   const products = getProductsWithPool(db, true);
+  const buyAheadPredictions = computeBuyAheadPredictions(db);
+  const wholesaleOrders = getWholesaleOrders(db);
+  const wholesaleApiConfigured = isWholesaleApiConfigured();
 
   const productAllocRows = db
     .prepare(`
@@ -183,21 +209,25 @@ export function getAdminSummary(db: DatabaseSync): AdminSummary {
         p.case_size,
         p.share_price_pence,
         p.wholesale_case_cost_pence,
-        COALESCE(SUM(CASE WHEN a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS locked_slots,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS box_locked_slots,
         COALESCE(SUM(CASE WHEN a.status IN ('locked_box', 'fulfilled') THEN a.share_price_pence ELSE 0 END), 0) AS locked_revenue_pence,
-        COALESCE(SUM(CASE WHEN a.status IN ('pooling', 'auto_refunded') THEN 1 ELSE 0 END), 0) AS overflow_slots
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('pooling', 'auto_refunded') THEN 1 ELSE 0 END), 0) AS overflow_slots
       FROM products p
       LEFT JOIN pool_allocations a
         ON a.product_id = p.id AND a.drop_cycle_number = ?
       WHERE p.deleted_at IS NULL
       GROUP BY p.id
-      ORDER BY locked_slots DESC, p.sort_order ASC, p.created_at ASC
+      ORDER BY box_locked_slots DESC, p.sort_order ASC, p.created_at ASC
     `)
     .all(settings.dropCycleNumber) as Array<Record<string, unknown>>;
 
   const shoppingList: WholesaleShoppingLine[] = productAllocRows.map((row) => {
-    const caseSize = Number(row.case_size);
-    const lockedCasesCount = Math.floor(Number(row.locked_slots) / caseSize);
+    const caseSize = Math.max(1, Number(row.case_size));
+    const boxLockedSlots = Number(row.box_locked_slots);
+    const lockedCasesCount =
+      settings.dropStatus === 'closed'
+        ? Math.ceil(boxLockedSlots / caseSize)
+        : Math.floor(boxLockedSlots / caseSize);
     const overflowSlotsCount = Number(row.overflow_slots);
     const wholesaleCaseCostPence = Number(row.wholesale_case_cost_pence);
     const totalWholesaleCostPence = lockedCasesCount * wholesaleCaseCostPence;
@@ -231,7 +261,6 @@ export function getAdminSummary(db: DatabaseSync): AdminSummary {
   );
   const paidStudentIds = new Set(cycleOrderRows.map((r) => String(r.user_id)));
 
-  // Retain small-order fees only on orders that have at least 1 locked/fulfilled share.
   const cycleOrderIdsWithLocked = new Set<string>();
   const lockedOrderCheckRows = db
     .prepare(`
@@ -266,6 +295,9 @@ export function getAdminSummary(db: DatabaseSync): AdminSummary {
     settings,
     products,
     shoppingList,
+    buyAheadPredictions,
+    wholesaleOrders,
+    wholesaleApiConfigured,
     orders,
     totals: {
       totalOrdersCount: cycleOrderRows.length,

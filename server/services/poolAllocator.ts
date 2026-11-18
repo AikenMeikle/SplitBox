@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { AuthUser, Order } from '../../src/shared/types.ts';
-import { getOrderById, getSettings, HttpError, runImmediateTransaction } from '../db.ts';
+import {
+  getOrderById,
+  getProductWithPoolById,
+  getSettings,
+  HttpError,
+  runImmediateTransaction,
+} from '../db.ts';
 import { generateUniquePickupCode, generateUniquePickupPin, signQrToken } from './qrPass.ts';
 
 export interface ValidatedLineItem {
@@ -18,12 +24,13 @@ export interface PendingCheckoutData {
   subtotalPence: number;
   feePence: number;
   totalPaidPence: number;
+  closerDiscountTotalPence: number;
   lineItems: ValidatedLineItem[];
 }
 
 /**
- * Validates basket items, computes integer GBP pence totals + small-order fee,
- * and inserts a `pending_payment` order row (without claiming pool slots until paid).
+ * Validates basket items, applies Almost-Full Closer Discounts (`effectiveSharePricePence`)
+ * and fee waivers (`waivesSmallOrderFee`), and records a `pending_payment` order.
  */
 export function createPendingOrder(
   db: DatabaseSync,
@@ -40,7 +47,6 @@ export function createPendingOrder(
     throw new HttpError(400, 'Your basket is empty.');
   }
 
-  // Merge duplicate productIds and validate positive integer quantities.
   const mergedQty = new Map<string, number>();
   for (const item of rawItems) {
     if (!item || typeof item.productId !== 'string' || !item.productId.trim()) {
@@ -57,41 +63,47 @@ export function createPendingOrder(
     mergedQty.set(item.productId, next);
   }
 
-  const productStmt = db.prepare(
-    'SELECT * FROM products WHERE id = ? AND is_active = 1 AND deleted_at IS NULL'
-  );
-
   const lineItems: ValidatedLineItem[] = [];
   let subtotalPence = 0;
   let totalAldiComparisonPence = 0;
+  let closerDiscountTotalPence = 0;
+  let anyWaivesSmallOrderFee = false;
 
   for (const [productId, quantity] of mergedQty.entries()) {
-    const p = productStmt.get(productId) as Record<string, unknown> | undefined;
-    if (!p) {
+    const p = getProductWithPoolById(db, productId);
+    if (!p || !p.isActive) {
       throw new HttpError(400, `Product "${productId}" is no longer available.`);
     }
-    const sharePricePence = Number(p.share_price_pence);
-    const aldiPricePence = Number(p.aldi_price_pence);
-    subtotalPence += sharePricePence * quantity;
-    totalAldiComparisonPence += aldiPricePence * quantity;
+
+    const chargedSharePence = p.effectiveSharePricePence;
+    subtotalPence += chargedSharePence * quantity;
+    totalAldiComparisonPence += p.aldiPricePence * quantity;
+    closerDiscountTotalPence += p.closerDiscountPence * quantity;
+    if (p.waivesSmallOrderFee) {
+      anyWaivesSmallOrderFee = true;
+    }
+
     lineItems.push({
       productId,
-      productName: `${String(p.brand)} ${String(p.name)}`,
-      unitDescription: String(p.unit_description),
-      sharePricePence,
-      aldiPricePence,
+      productName: `${p.brand} ${p.name}`,
+      unitDescription: p.unitDescription,
+      sharePricePence: chargedSharePence,
+      aldiPricePence: p.aldiPricePence,
       quantity,
     });
   }
 
   const feePence =
-    subtotalPence >= settings.freeDeliveryThresholdPence ? 0 : settings.smallOrderFeePence;
+    anyWaivesSmallOrderFee || subtotalPence >= settings.freeDeliveryThresholdPence
+      ? 0
+      : settings.smallOrderFeePence;
   const totalPaidPence = subtotalPence + feePence;
 
   const orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-  const normalizedItems = lineItems.map((li) => ({
+  const persistedItems = lineItems.map((li) => ({
     productId: li.productId,
     quantity: li.quantity,
+    unitPricePence: li.sharePricePence,
   }));
 
   runImmediateTransaction(db, () => {
@@ -110,20 +122,21 @@ export function createPendingOrder(
         id, drop_cycle_number, user_id, user_email, user_name, status,
         items_json, subtotal_pence, fee_pence, total_paid_pence,
         refunded_pence, net_charged_pence, total_aldi_comparison_pence,
-        pickup_code, pickup_pin, qr_token, payment_mode, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+        closer_discount_total_pence, pickup_code, pickup_pin, qr_token, payment_mode, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       orderId,
       freshSettings.dropCycleNumber,
       user.id,
       user.email,
       user.name,
-      JSON.stringify(normalizedItems),
+      JSON.stringify(persistedItems),
       subtotalPence,
       feePence,
       totalPaidPence,
       totalPaidPence,
       totalAldiComparisonPence,
+      closerDiscountTotalPence,
       pickupCode,
       pickupPin,
       qrToken,
@@ -137,6 +150,7 @@ export function createPendingOrder(
     subtotalPence,
     feePence,
     totalPaidPence,
+    closerDiscountTotalPence,
     lineItems,
   };
 }
@@ -150,11 +164,11 @@ export function attachStripeSessionToOrder(
 }
 
 /**
- * Atomically confirms payment for an order and allocates sequential pool slots
- * (`global_slot_index = 0, 1, 2...`) inside a `BEGIN IMMEDIATE` write transaction.
- *
- * Whenever a wholesale box reaches `slot_in_box === caseSize`, ALL shares in that
- * box are immediately promoted from `'pooling'` to `'locked_box'`!
+ * Atomically confirms payment and allocates sequential pool slots inside `BEGIN IMMEDIATE`.
+ *  - If hub carryover stock (`carryover_stock_slots > 0`) exists from a previous week's
+ *    underwritten case, fulfills from hub stock first (`box_number = 0`, `locked_box` immediately).
+ *  - Otherwise allocates sequential `global_slot_index = 0, 1, 2...` and promotes all
+ *    slots in `box_number` to `'locked_box'` the instant `slot_in_box === caseSize`!
  */
 export function confirmOrderPayment(
   db: DatabaseSync,
@@ -174,7 +188,6 @@ export function confirmOrderPayment(
       throw new HttpError(403, 'You are not authorised to confirm this order.');
     }
 
-    // Idempotency: if Stripe webhook + browser redirect both fire, only allocate once!
     if (String(orderRow.status) !== 'pending_payment') {
       const existing = getOrderById(db, orderId);
       if (!existing) throw new HttpError(500, 'Failed to load confirmed order.');
@@ -190,13 +203,22 @@ export function confirmOrderPayment(
     const items = JSON.parse(String(orderRow.items_json)) as Array<{
       productId: string;
       quantity: number;
+      unitPricePence?: number;
     }>;
 
     const getProductStmt = db.prepare('SELECT * FROM products WHERE id = ?');
-    const getNextSlotStmt = db.prepare(`
-      SELECT COALESCE(MAX(global_slot_index), -1) + 1 AS next_slot
+    const getNextPoolSlotStmt = db.prepare(`
+      SELECT COALESCE(MAX(CASE WHEN box_number >= 1 THEN global_slot_index ELSE -1 END), -1) + 1 AS next_slot
       FROM pool_allocations
       WHERE drop_cycle_number = ? AND product_id = ?
+    `);
+    const getNextCarryoverIdxStmt = db.prepare(`
+      SELECT COALESCE(MIN(CASE WHEN box_number = 0 THEN global_slot_index ELSE 0 END), 0) - 1 AS next_neg_slot
+      FROM pool_allocations
+      WHERE drop_cycle_number = ? AND product_id = ?
+    `);
+    const decrementCarryoverStmt = db.prepare(`
+      UPDATE products SET carryover_stock_slots = carryover_stock_slots - 1 WHERE id = ?
     `);
     const insertAllocStmt = db.prepare(`
       INSERT INTO pool_allocations (
@@ -204,7 +226,7 @@ export function confirmOrderPayment(
         product_name, product_brand, unit_description, image_emoji,
         global_slot_index, box_number, slot_in_box, case_size,
         share_price_pence, aldi_price_pence, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pooling', ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const promoteBoxStmt = db.prepare(`
       UPDATE pool_allocations
@@ -222,16 +244,54 @@ export function confirmOrderPayment(
       }
 
       const caseSize = Number(product.case_size);
-      const nextSlotRow = getNextSlotStmt.get(dropCycleNumber, item.productId) as {
+      const paidSharePence =
+        item.unitPricePence !== undefined
+          ? Number(item.unitPricePence)
+          : Number(product.share_price_pence);
+
+      let availableCarryover = Math.max(0, Number(product.carryover_stock_slots || 0));
+      const nextPoolRow = getNextPoolSlotStmt.get(dropCycleNumber, item.productId) as {
         next_slot: number;
       };
-      const startSlot = Number(nextSlotRow.next_slot);
+      let nextPoolSlot = Number(nextPoolRow.next_slot);
+
+      const nextCarryRow = getNextCarryoverIdxStmt.get(dropCycleNumber, item.productId) as {
+        next_neg_slot: number;
+      };
+      let nextCarryoverSlot = Number(nextCarryRow.next_neg_slot);
 
       for (let i = 0; i < item.quantity; i++) {
-        const globalSlotIndex = startSlot + i;
+        const allocId = `alc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+
+        if (availableCarryover > 0) {
+          // Allocate immediately from hub-held carryover stock!
+          availableCarryover--;
+          decrementCarryoverStmt.run(item.productId);
+          insertAllocStmt.run(
+            allocId,
+            dropCycleNumber,
+            orderId,
+            userId,
+            item.productId,
+            String(product.name),
+            String(product.brand),
+            String(product.unit_description),
+            String(product.image_emoji),
+            nextCarryoverSlot--,
+            0,
+            1,
+            caseSize,
+            paidSharePence,
+            Number(product.aldi_price_pence),
+            'locked_box',
+            nowIso
+          );
+          continue;
+        }
+
+        const globalSlotIndex = nextPoolSlot++;
         const boxNumber = Math.floor(globalSlotIndex / caseSize) + 1;
         const slotInBox = (globalSlotIndex % caseSize) + 1;
-        const allocId = `alc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
         insertAllocStmt.run(
           allocId,
@@ -247,12 +307,12 @@ export function confirmOrderPayment(
           boxNumber,
           slotInBox,
           caseSize,
-          Number(product.share_price_pence),
+          paidSharePence,
           Number(product.aldi_price_pence),
+          'pooling',
           nowIso
         );
 
-        // As soon as the final slot of a box is claimed, lock the entire wholesale box!
         if (slotInBox === caseSize) {
           promoteBoxStmt.run(dropCycleNumber, item.productId, boxNumber);
         }
@@ -267,9 +327,7 @@ export function confirmOrderPayment(
     `).run(options?.stripePaymentIntentId ?? null, orderId);
 
     const confirmed = getOrderById(db, orderId);
-    if (!confirmed) {
-      throw new HttpError(500, 'Failed to load confirmed order.');
-    }
+    if (!confirmed) throw new HttpError(500, 'Failed to load confirmed order.');
     return confirmed;
   });
 }

@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  AllocationStatus,
   DropSettings,
   DropStatus,
   Order,
   OrderItemAllocation,
   OrderStatus,
-  AllocationStatus,
   ProductWithPool,
 } from '../src/shared/types.ts';
 
@@ -23,11 +23,6 @@ export class HttpError extends Error {
   }
 }
 
-/**
- * Opens the SQLite database using Node 22's built-in `node:sqlite` driver.
- * Enables WAL mode and a 5-second busy timeout so concurrent student checkouts
- * queue cleanly without throwing lock errors.
- */
 export function openDatabase(customPath?: string): DatabaseSync {
   const sqlitePath = customPath || process.env.SQLITE_PATH || 'data/divly.sqlite';
   if (sqlitePath !== ':memory:') {
@@ -47,10 +42,15 @@ export function openDatabase(customPath?: string): DatabaseSync {
   return db;
 }
 
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 /**
- * Creates all tables and uniqueness constraints if they do not exist yet.
- * Notice `UNIQUE(drop_cycle_number, product_id, global_slot_index)` on `pool_allocations`:
- * this guarantees at the database level that two students can NEVER be assigned the same slot.
+ * Creates all tables and auto-migrates additive columns on existing SQLite files.
  */
 export function initSchema(db: DatabaseSync): void {
   db.exec(`
@@ -80,6 +80,11 @@ export function initSchema(db: DatabaseSync): void {
       aldi_price_pence INTEGER NOT NULL CHECK (aldi_price_pence >= 0),
       aldi_unit_label TEXT NOT NULL,
       wholesale_case_cost_pence INTEGER NOT NULL CHECK (wholesale_case_cost_pence >= 0),
+      ean_barcode TEXT NOT NULL DEFAULT '',
+      supplier_sku TEXT NOT NULL DEFAULT '',
+      supplier_name TEXT NOT NULL DEFAULT 'Qogita / Booker UK',
+      shelf_life_weeks INTEGER NOT NULL DEFAULT 26,
+      carryover_stock_slots INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       deleted_at TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
@@ -124,6 +129,7 @@ export function initSchema(db: DatabaseSync): void {
       refunded_pence INTEGER NOT NULL DEFAULT 0,
       net_charged_pence INTEGER NOT NULL,
       total_aldi_comparison_pence INTEGER NOT NULL,
+      closer_discount_total_pence INTEGER NOT NULL DEFAULT 0,
       pickup_code TEXT NOT NULL UNIQUE,
       pickup_pin TEXT NOT NULL UNIQUE,
       qr_token TEXT NOT NULL,
@@ -155,6 +161,19 @@ export function initSchema(db: DatabaseSync): void {
       UNIQUE(drop_cycle_number, product_id, global_slot_index)
     );
 
+    CREATE TABLE IF NOT EXISTS wholesale_orders (
+      id TEXT PRIMARY KEY,
+      drop_cycle_number INTEGER NOT NULL,
+      supplier_name TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      external_order_ref TEXT NOT NULL,
+      status TEXT NOT NULL,
+      total_cases_count INTEGER NOT NULL,
+      total_spend_pence INTEGER NOT NULL,
+      portal_links_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_allocations_cycle_product_box
       ON pool_allocations(drop_cycle_number, product_id, box_number);
     CREATE INDEX IF NOT EXISTS idx_allocations_order
@@ -164,12 +183,16 @@ export function initSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_orders_cycle
       ON orders(drop_cycle_number, created_at DESC);
   `);
+
+  // Safe migrations for existing `data/divly.sqlite` databases
+  ensureColumn(db, 'products', 'ean_barcode', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'products', 'supplier_sku', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'products', 'supplier_name', "TEXT NOT NULL DEFAULT 'Qogita / Booker UK'");
+  ensureColumn(db, 'products', 'shelf_life_weeks', 'INTEGER NOT NULL DEFAULT 26');
+  ensureColumn(db, 'products', 'carryover_stock_slots', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'orders', 'closer_discount_total_pence', 'INTEGER NOT NULL DEFAULT 0');
 }
 
-/**
- * Runs a callback inside an immediate SQLite write transaction (`BEGIN IMMEDIATE`).
- * Retries briefly if another process holds a momentary write lock.
- */
 export function runImmediateTransaction<T>(db: DatabaseSync, fn: () => T): T {
   const maxRetries = 5;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -178,9 +201,7 @@ export function runImmediateTransaction<T>(db: DatabaseSync, fn: () => T): T {
       break;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < maxRetries && msg.includes('locked')) {
-        continue;
-      }
+      if (attempt < maxRetries && msg.includes('locked')) continue;
       throw err;
     }
   }
@@ -193,18 +214,17 @@ export function runImmediateTransaction<T>(db: DatabaseSync, fn: () => T): T {
     try {
       db.exec('ROLLBACK');
     } catch {
-      // Ignore rollback errors if SQLite already rolled back.
+      // Ignore if already rolled back
     }
     throw err;
   }
 }
 
-/** Reads the single settings row into the shared `DropSettings` shape. */
 export function getSettings(db: DatabaseSync): DropSettings {
-  const row = db.prepare('SELECT * FROM settings WHERE id = 1').get() as Record<string, unknown> | undefined;
-  if (!row) {
-    throw new HttpError(500, 'Drop settings have not been seeded.');
-  }
+  const row = db.prepare('SELECT * FROM settings WHERE id = 1').get() as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) throw new HttpError(500, 'Drop settings have not been seeded.');
   return {
     hubName: String(row.hub_name),
     hubShortLabel: String(row.hub_short_label),
@@ -218,58 +238,72 @@ export function getSettings(db: DatabaseSync): DropSettings {
   };
 }
 
-/**
- * Returns products enriched with live pool progress for the current `dropCycleNumber`.
- * By default returns only active non-deleted products for the student storefront;
- * pass `includeInactive = true` for the Admin catalog table.
- */
 export function getProductsWithPool(db: DatabaseSync, includeInactive = false): ProductWithPool[] {
   const settings = getSettings(db);
   const whereClause = includeInactive
     ? 'WHERE p.deleted_at IS NULL'
     : 'WHERE p.deleted_at IS NULL AND p.is_active = 1';
 
-  const rows = db.prepare(`
-    SELECT
-      p.*,
-      COALESCE(SUM(CASE WHEN a.status IN ('pooling', 'locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS active_slots,
-      COALESCE(SUM(CASE WHEN a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS locked_slots,
-      COALESCE(SUM(CASE WHEN a.status = 'pooling' THEN 1 ELSE 0 END), 0) AS pooling_slots
-    FROM products p
-    LEFT JOIN pool_allocations a
-      ON a.product_id = p.id AND a.drop_cycle_number = ?
-    ${whereClause}
-    GROUP BY p.id
-    ORDER BY p.sort_order ASC, p.created_at ASC
-  `).all(settings.dropCycleNumber) as Array<Record<string, unknown>>;
+  const rows = db
+    .prepare(`
+      SELECT
+        p.*,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('pooling', 'locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS active_slots,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS locked_slots,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status = 'pooling' THEN 1 ELSE 0 END), 0) AS pooling_slots
+      FROM products p
+      LEFT JOIN pool_allocations a
+        ON a.product_id = p.id AND a.drop_cycle_number = ?
+      ${whereClause}
+      GROUP BY p.id
+      ORDER BY p.sort_order ASC, p.created_at ASC
+    `)
+    .all(settings.dropCycleNumber) as Array<Record<string, unknown>>;
 
-  return rows.map((row) => mapProductWithPoolRow(row));
+  return rows.map((row) => mapProductWithPoolRow(row, settings.dropStatus));
 }
 
-export function getProductWithPoolById(db: DatabaseSync, productId: string): ProductWithPool | null {
+export function getProductWithPoolById(
+  db: DatabaseSync,
+  productId: string
+): ProductWithPool | null {
   const settings = getSettings(db);
-  const row = db.prepare(`
-    SELECT
-      p.*,
-      COALESCE(SUM(CASE WHEN a.status IN ('pooling', 'locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS active_slots,
-      COALESCE(SUM(CASE WHEN a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS locked_slots,
-      COALESCE(SUM(CASE WHEN a.status = 'pooling' THEN 1 ELSE 0 END), 0) AS pooling_slots
-    FROM products p
-    LEFT JOIN pool_allocations a
-      ON a.product_id = p.id AND a.drop_cycle_number = ?
-    WHERE p.id = ? AND p.deleted_at IS NULL
-    GROUP BY p.id
-  `).get(settings.dropCycleNumber, productId) as Record<string, unknown> | undefined;
+  const row = db
+    .prepare(`
+      SELECT
+        p.*,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('pooling', 'locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS active_slots,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status IN ('locked_box', 'fulfilled') THEN 1 ELSE 0 END), 0) AS locked_slots,
+        COALESCE(SUM(CASE WHEN a.box_number >= 1 AND a.status = 'pooling' THEN 1 ELSE 0 END), 0) AS pooling_slots
+      FROM products p
+      LEFT JOIN pool_allocations a
+        ON a.product_id = p.id AND a.drop_cycle_number = ?
+      WHERE p.id = ? AND p.deleted_at IS NULL
+      GROUP BY p.id
+    `)
+    .get(settings.dropCycleNumber, productId) as Record<string, unknown> | undefined;
 
-  return row ? mapProductWithPoolRow(row) : null;
+  return row ? mapProductWithPoolRow(row, settings.dropStatus) : null;
 }
 
-function mapProductWithPoolRow(row: Record<string, unknown>): ProductWithPool {
-  const caseSize = Number(row.case_size);
+/**
+ * Maps a product row + live pool aggregates, including the Herd / Almost-Full
+ * Closer Bonus (6%–10% extra discount + small-order fee waiver when >=50% full or <=2 spots left).
+ */
+function mapProductWithPoolRow(
+  row: Record<string, unknown>,
+  dropStatus: DropStatus
+): ProductWithPool {
+  const caseSize = Math.max(1, Number(row.case_size));
   const sharePricePence = Number(row.share_price_pence);
   const aldiPricePence = Number(row.aldi_price_pence);
+  const wholesaleCaseCostPence = Number(row.wholesale_case_cost_pence);
   const totalClaimedSlots = Number(row.active_slots);
-  const lockedCasesCount = Math.floor(Number(row.locked_slots) / caseSize);
+  const lockedSlots = Number(row.locked_slots);
+  const lockedCasesCount =
+    dropStatus === 'closed'
+      ? Math.ceil(lockedSlots / caseSize)
+      : Math.floor(lockedSlots / caseSize);
   const openCaseClaimedSlots = Number(row.pooling_slots);
   const openCaseRemainingSlots = Math.max(0, caseSize - openCaseClaimedSlots);
   const currentCaseNumber = lockedCasesCount + 1;
@@ -277,6 +311,34 @@ function mapProductWithPoolRow(row: Record<string, unknown>): ProductWithPool {
     aldiPricePence > 0
       ? Math.max(0, Math.round(((aldiPricePence - sharePricePence) / aldiPricePence) * 100))
       : 0;
+
+  // Herd / Almost-Full Closer Incentive
+  const fillRatio = Number((openCaseClaimedSlots / caseSize).toFixed(4));
+  const isAlmostFull =
+    dropStatus === 'open' &&
+    openCaseClaimedSlots > 0 &&
+    (openCaseRemainingSlots <= 2 || fillRatio >= 0.5);
+
+  const minFloorPence = Math.ceil(wholesaleCaseCostPence / caseSize) + 10;
+  let effectiveSharePricePence = sharePricePence;
+  let closerDiscountPence = 0;
+  let closerDiscountPercent = 0;
+  let waivesSmallOrderFee = false;
+
+  if (isAlmostFull) {
+    waivesSmallOrderFee = true;
+    const rawPct = openCaseRemainingSlots === 1 ? 10 : 6;
+    const candidatePrice = Math.round(sharePricePence * (1 - rawPct / 100));
+    effectiveSharePricePence =
+      sharePricePence <= minFloorPence
+        ? sharePricePence
+        : Math.max(minFloorPence, candidatePrice);
+    closerDiscountPence = Math.max(0, sharePricePence - effectiveSharePricePence);
+    closerDiscountPercent =
+      closerDiscountPence > 0 && sharePricePence > 0
+        ? Math.max(1, Math.round((closerDiscountPence / sharePricePence) * 100))
+        : 0;
+  }
 
   return {
     id: String(row.id),
@@ -290,35 +352,51 @@ function mapProductWithPoolRow(row: Record<string, unknown>): ProductWithPool {
     sharePricePence,
     aldiPricePence,
     aldiUnitLabel: String(row.aldi_unit_label),
-    wholesaleCaseCostPence: Number(row.wholesale_case_cost_pence),
+    wholesaleCaseCostPence,
     isActive: Number(row.is_active) === 1,
+    eanBarcode: String(row.ean_barcode || ''),
+    supplierSku: String(row.supplier_sku || ''),
+    supplierName: String(row.supplier_name || 'Qogita / Booker UK'),
+    shelfLifeWeeks: Number(row.shelf_life_weeks || 26),
+    carryoverStockSlots: Number(row.carryover_stock_slots || 0),
     totalClaimedSlots,
     lockedCasesCount,
     openCaseClaimedSlots,
     openCaseRemainingSlots,
     currentCaseNumber,
     savingsPercent,
+    fillRatio,
+    isAlmostFull,
+    closerDiscountPercent,
+    closerDiscountPence,
+    effectiveSharePricePence,
+    waivesSmallOrderFee,
   };
 }
 
-/** Loads one `Order` along with its ordered `OrderItemAllocation[]` rows. */
 export function getOrderById(db: DatabaseSync, orderId: string): Order | null {
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId) as Record<string, unknown> | undefined;
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId) as
+    | Record<string, unknown>
+    | undefined;
   if (!row) return null;
   return hydrateOrders(db, [row])[0] ?? null;
 }
 
-/** Hydrates raw `orders` rows with their `pool_allocations` in a single batch query. */
-export function hydrateOrders(db: DatabaseSync, orderRows: Array<Record<string, unknown>>): Order[] {
+export function hydrateOrders(
+  db: DatabaseSync,
+  orderRows: Array<Record<string, unknown>>
+): Order[] {
   if (orderRows.length === 0) return [];
   const placeholders = orderRows.map(() => '?').join(', ');
   const orderIds = orderRows.map((r) => String(r.id));
 
-  const allocRows = db.prepare(`
-    SELECT * FROM pool_allocations
-    WHERE order_id IN (${placeholders})
-    ORDER BY product_name ASC, global_slot_index ASC
-  `).all(...orderIds) as Array<Record<string, unknown>>;
+  const allocRows = db
+    .prepare(`
+      SELECT * FROM pool_allocations
+      WHERE order_id IN (${placeholders})
+      ORDER BY product_name ASC, global_slot_index ASC
+    `)
+    .all(...orderIds) as Array<Record<string, unknown>>;
 
   const byOrder = new Map<string, OrderItemAllocation[]>();
   for (const a of allocRows) {
@@ -354,6 +432,7 @@ export function hydrateOrders(db: DatabaseSync, orderRows: Array<Record<string, 
     refundedPence: Number(r.refunded_pence),
     netChargedPence: Number(r.net_charged_pence),
     totalAldiComparisonPence: Number(r.total_aldi_comparison_pence),
+    closerDiscountTotalPence: Number(r.closer_discount_total_pence || 0),
     pickupCode: String(r.pickup_code),
     pickupPin: String(r.pickup_pin),
     qrToken: String(r.qr_token),
