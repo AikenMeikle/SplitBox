@@ -108,13 +108,24 @@ export function BasketDrawer() {
   const smallOrderFeePence = settings?.smallOrderFeePence ?? 50;
   const dropClosed = settings?.dropStatus === 'closed';
 
+  const calcLineTotalPence = (product: ProductWithPool, qty: number): number => {
+    const discountedQty =
+      product.isAlmostFull && product.closerDiscountPence > 0
+        ? Math.min(qty, Math.max(0, product.openCaseRemainingSlots))
+        : 0;
+    const regularQty = qty - discountedQty;
+    return (
+      discountedQty * (product.effectiveSharePricePence ?? product.sharePricePence) +
+      regularQty * product.sharePricePence
+    );
+  };
+
   const subtotalPence = basketLines.reduce(
-    (s, { product, qty }) => s + (product.effectiveSharePricePence ?? product.sharePricePence) * qty,
+    (s, { product, qty }) => s + calcLineTotalPence(product, qty),
     0,
   );
   const closerBonusSavedPence = basketLines.reduce(
-    (s, { product, qty }) =>
-      s + Math.max(0, product.sharePricePence - (product.effectiveSharePricePence ?? product.sharePricePence)) * qty,
+    (s, { product, qty }) => s + Math.max(0, product.sharePricePence * qty - calcLineTotalPence(product, qty)),
     0,
   );
   const maxCloserPercent = basketLines.reduce(
@@ -152,6 +163,9 @@ export function BasketDrawer() {
         body: JSON.stringify(payload),
       });
       if (res.mode === 'stripe_redirect' && res.checkoutUrl) {
+        if (!res.checkoutUrl.startsWith('https://checkout.stripe.com/')) {
+          throw new Error('Blocked unexpected checkout redirect URL.');
+        }
         window.location.href = res.checkoutUrl;
         return;
       }
@@ -329,7 +343,7 @@ export function BasketDrawer() {
           ) : (
             <div className="space-y-3">
               {basketLines.map(({ product, qty }) => {
-                const unitPrice = product.effectiveSharePricePence ?? product.sharePricePence;
+                const lineTotal = calcLineTotalPence(product, qty);
                 const hasCloser = Boolean(product.isAlmostFull && product.closerDiscountPence > 0);
                 const preview = getAllocationPreview(product, qty);
                 const badgeStyle =
@@ -360,7 +374,7 @@ export function BasketDrawer() {
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-slate-900">{formatPence(unitPrice * qty)}</p>
+                        <p className="text-sm font-bold text-slate-900">{formatPence(lineTotal)}</p>
                         <p className="text-[11px] text-slate-400 line-through">Supermarket {formatPence(product.aldiPricePence * qty)}</p>
                       </div>
                     </div>

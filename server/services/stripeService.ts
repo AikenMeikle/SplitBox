@@ -74,7 +74,12 @@ export async function createStripeCheckoutSession(params: {
   });
 
   const data = (await res.json()) as Record<string, unknown>;
-  if (!res.ok || typeof data.id !== 'string' || typeof data.url !== 'string') {
+  if (
+    !res.ok ||
+    typeof data.id !== 'string' ||
+    typeof data.url !== 'string' ||
+    !data.url.startsWith('https://checkout.stripe.com/')
+  ) {
     const errObj = data.error as Record<string, unknown> | undefined;
     throw new HttpError(
       502,
@@ -143,6 +148,7 @@ export async function issueStripeRefund(
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': `divly-refund-${orderId}-${amountPence}`,
     },
     body: body.toString(),
   });

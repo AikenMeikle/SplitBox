@@ -68,18 +68,26 @@ function mapProductRequestRow(r: Record<string, unknown>): ProductRequest {
   };
 }
 
+function sanitizeRequestText(raw: unknown, maxLength = 120): string {
+  return String(raw ?? '')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
 /** Creates a new student bulk-item request and automatically casts the author's upvote. */
 export function createProductRequest(
   db: DatabaseSync,
   user: AuthUser,
   input: { itemName?: string; brandOrSize?: string; category?: string }
 ): ProductRequest {
-  const itemName = String(input.itemName ?? '').trim();
-  const brandOrSize = String(input.brandOrSize ?? '').trim() || 'Wholesale bulk pack';
-  const category = String(input.category ?? 'Cooking Staples').trim() || 'Cooking Staples';
+  const itemName = sanitizeRequestText(input.itemName, 120);
+  const brandOrSize = sanitizeRequestText(input.brandOrSize, 120) || 'Wholesale bulk pack';
+  const category = sanitizeRequestText(input.category, 60) || 'Cooking Staples';
 
-  if (itemName.length < 2 || itemName.length > 100) {
-    throw new HttpError(400, 'Please enter an item name between 2 and 100 characters.');
+  if (itemName.length < 2) {
+    throw new HttpError(400, 'Please enter an item name of at least 2 characters.');
   }
 
   const id = `req_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
@@ -91,7 +99,7 @@ export function createProductRequest(
         id, item_name, brand_or_size, category, requested_by_user_id,
         requested_by_name, base_upvotes, status, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, 0, 'open', ?)
-    `).run(id, itemName, brandOrSize.slice(0, 100), category.slice(0, 60), user.id, user.name, nowIso);
+    `).run(id, itemName, brandOrSize, category, user.id, user.name, nowIso);
 
     db.prepare(
       'INSERT INTO product_request_votes (request_id, user_id, created_at) VALUES (?, ?, ?)'

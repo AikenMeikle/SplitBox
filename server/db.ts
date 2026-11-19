@@ -125,6 +125,7 @@ export function initSchema(db: DatabaseSync): void {
       code_hash TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       used INTEGER NOT NULL DEFAULT 0,
+      failed_attempts INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
 
@@ -238,6 +239,7 @@ export function initSchema(db: DatabaseSync): void {
   ensureColumn(db, 'orders', 'closer_discount_total_pence', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'credit_applied_pence', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'credit_restored_pence', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'otp_codes', 'failed_attempts', 'INTEGER NOT NULL DEFAULT 0');
 
   // Scrub any legacy "Aldi" references from student-visible product unit labels
   db.exec(`
@@ -515,6 +517,7 @@ export function hydrateOrders(
     totalAldiComparisonPence: Number(r.total_aldi_comparison_pence),
     closerDiscountTotalPence: Number(r.closer_discount_total_pence || 0),
     creditAppliedPence: Number(r.credit_applied_pence || 0),
+    creditRestoredPence: Number(r.credit_restored_pence || 0),
     pickupCode: String(r.pickup_code),
     pickupPin: String(r.pickup_pin),
     qrToken: String(r.qr_token),

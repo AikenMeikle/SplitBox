@@ -106,6 +106,7 @@ export interface Order {
   totalAldiComparisonPence: number;
   closerDiscountTotalPence?: number;
   creditAppliedPence?: number;
+  creditRestoredPence?: number;
   pickupCode: string;
   pickupPin: string;
   qrToken: string;

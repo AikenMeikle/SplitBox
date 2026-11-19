@@ -89,7 +89,7 @@ function loadSavedBasket(): Record<string, number> {
     const clean: Record<string, number> = {};
     for (const [productId, value] of Object.entries(parsed)) {
       const qty = typeof value === 'number' ? Math.floor(value) : 0;
-      if (productId && qty > 0 && qty <= 99) {
+      if (productId && qty > 0 && qty <= 24) {
         clean[productId] = qty;
       }
     }
@@ -136,7 +136,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const setBasketQty = useCallback((productId: string, qty: number) => {
-    const safeQty = Number.isFinite(qty) ? Math.min(99, Math.floor(qty)) : 0;
+    const safeQty = Number.isFinite(qty) ? Math.min(24, Math.floor(qty)) : 0;
     setBasket((prev) => {
       if (safeQty <= 0) {
         if (!(productId in prev)) return prev;
@@ -151,7 +151,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addToBasket = useCallback((productId: string, delta = 1) => {
     setBasket((prev) => {
       const current = prev[productId] ?? 0;
-      const nextQty = Math.min(99, Math.floor(current + delta));
+      const nextQty = Math.min(24, Math.floor(current + delta));
       if (nextQty <= 0) {
         if (!(productId in prev)) return prev;
         const next = { ...prev };
@@ -171,7 +171,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshState = useCallback(async () => {
-    const data = await apiFetch<StateResponse>('/api/state');
+    let data: StateResponse;
+    try {
+      data = await apiFetch<StateResponse>('/api/state');
+    } catch {
+      // Retry once after a short pause in case local `tsx watch` is mid-reload
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      data = await apiFetch<StateResponse>('/api/state');
+    }
     setSettings(data.settings);
     setProducts(data.products);
     setStripeConfigured(Boolean(data.stripeConfigured));
@@ -201,6 +208,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAuthToken(token);
     setUser(nextUser);
     setIsAuthModalOpen(false);
+    if (nextUser.role !== 'admin') {
+      setActiveTab((prev) => (prev === 'admin' ? 'shop' : prev));
+    }
     void apiFetch<{ orders: Order[] }>('/api/orders/mine')
       .then((res) => setOrders(res.orders))
       .catch(() => setOrders([]));

@@ -120,10 +120,14 @@ function settleDropCycleInTx(
       creditRestoredPence = creditAppliedPence;
       nextStatus = 'refunded';
     } else {
-      // Refund cash up to `totalPaidPence`; restore any remaining auto-refund value to wallet credit!
-      refundedPence = Math.min(totalPaidPence, autoRefundedSharesPence);
+      // Restore promotional wallet credit first so store credit cannot be cashed out as bank money,
+      // then refund real Stripe cash up to `totalPaidPence`!
+      creditRestoredPence = Math.min(creditAppliedPence, autoRefundedSharesPence);
+      refundedPence = Math.min(
+        totalPaidPence,
+        Math.max(0, autoRefundedSharesPence - creditRestoredPence)
+      );
       netChargedPence = totalPaidPence - refundedPence;
-      creditRestoredPence = Math.max(0, autoRefundedSharesPence - refundedPence);
       nextStatus = currentStatus === 'collected' ? 'collected' : 'settled';
     }
 

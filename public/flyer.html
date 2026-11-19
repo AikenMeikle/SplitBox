@@ -426,7 +426,8 @@
         var printBtn = document.getElementById('print-btn');
         if (input && badge) {
           input.addEventListener('input', function () {
-            badge.textContent = input.value.trim().toUpperCase() || 'UOB-VALE50';
+            var clean = input.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 18).toUpperCase();
+            badge.textContent = clean || 'UOB-VALE50';
           });
         }
         if (printBtn) {

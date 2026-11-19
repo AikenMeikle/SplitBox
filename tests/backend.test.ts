@@ -4,10 +4,13 @@ import fs from 'node:fs';
 import type { Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { openDatabase } from '../server/db.ts';
 import { createApp } from '../server/index.ts';
 import { seedDatabase } from '../server/seed.ts';
+import { createPendingOrder } from '../server/services/poolAllocator.ts';
+import { validateWholesaleWebhookUrl } from '../server/services/wholesaleApi.ts';
 import type {
   AdminSummary,
   AuthUser,
@@ -25,6 +28,7 @@ process.env.DIVLY_QUIET_LOGS = '1';
 
 interface TestHarness {
   baseUrl: string;
+  db: DatabaseSync;
   cleanup: () => Promise<void>;
 }
 
@@ -48,6 +52,7 @@ async function startTestServer(options?: { includeDemoPools?: boolean }): Promis
 
   return {
     baseUrl: `http://127.0.0.1:${addr.port}`,
+    db,
     cleanup: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       db.close();
@@ -622,6 +627,369 @@ test('10. Student Bulk Item Request Board voting & 1-click Admin JSON Backup', a
     assert.ok(backup.headers.get('content-disposition')?.includes('attachment'));
     assert.ok(Array.isArray(backup.body.products));
     assert.ok(Array.isArray(backup.body.productRequests));
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test('11. Security: IDOR block on confirm-test, confirm-test/webhook idempotency, and stripe_live bypass block', async () => {
+  const h = await startTestServer({ includeDemoPools: false });
+  const prevStripeSecret = process.env.STRIPE_SECRET_KEY;
+  const prevWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  try {
+    const referrer = await loginStudent(h.baseUrl, 'sec.referrer');
+    const alice = await loginStudent(h.baseUrl, 'sec.alice', referrer.user.referralCode);
+    const attackerBob = await loginStudent(h.baseUrl, 'sec.bob');
+
+    // Alice creates a pending order (uses 50p referral credit)
+    const createRes = await apiJson<CreateCheckoutResponse>(h.baseUrl, '/api/checkout/create', {
+      method: 'POST',
+      token: alice.token,
+      body: JSON.stringify({ items: [{ productId: 'prod-indomie-10pk', quantity: 2 }] }),
+    });
+    assert.equal(createRes.status, 200);
+    const pendingOrderId = createRes.body.pendingOrderId;
+
+    // (a) IDOR block: Attacker Bob cannot confirm or inspect Alice's pending order
+    const idorAttempt = await apiJson<{ error: string }>(h.baseUrl, '/api/checkout/confirm-test', {
+      method: 'POST',
+      token: attackerBob.token,
+      body: JSON.stringify({ pendingOrderId }),
+    });
+    assert.equal(idorAttempt.status, 403);
+
+    // (b) Idempotency: Alice confirming the same order multiple times never double-allocates
+    //     slots, never double-deducts credit, and never double-awards the £1.00 referrer bonus!
+    const confirm1 = await apiJson<{ order: Order }>(h.baseUrl, '/api/checkout/confirm-test', {
+      method: 'POST',
+      token: alice.token,
+      body: JSON.stringify({ pendingOrderId }),
+    });
+    const confirm2 = await apiJson<{ order: Order }>(h.baseUrl, '/api/checkout/confirm-test', {
+      method: 'POST',
+      token: alice.token,
+      body: JSON.stringify({ pendingOrderId }),
+    });
+    assert.equal(confirm1.status, 200);
+    assert.equal(confirm2.status, 200);
+    assert.equal(confirm2.body.order.allocations.length, 2);
+
+    // Even after confirmation, Bob still gets 403 trying to inspect Alice's order via confirm-test
+    const idorAfter = await apiJson<{ error: string }>(h.baseUrl, '/api/checkout/confirm-test', {
+      method: 'POST',
+      token: attackerBob.token,
+      body: JSON.stringify({ pendingOrderId }),
+    });
+    assert.equal(idorAfter.status, 403);
+
+    const stateAfter = await apiJson<{ products: ProductWithPool[] }>(h.baseUrl, '/api/state');
+    const indomie = stateAfter.body.products.find((p) => p.id === 'prod-indomie-10pk')!;
+    assert.equal(indomie.totalClaimedSlots, 2);
+
+    const refMe = await apiJson<{ user: AuthUser }>(h.baseUrl, '/api/auth/me', {
+      token: referrer.token,
+    });
+    assert.equal(refMe.body.user.creditBalancePence, 100);
+
+    // (c) stripe_live order CANNOT be bypassed via /api/checkout/confirm-test
+    process.env.STRIPE_SECRET_KEY = 'sk_test_dummy_for_live_guard';
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_idempotency_secret';
+
+    const livePending = createPendingOrder(
+      h.db,
+      alice.user,
+      [{ productId: 'prod-basmati-5kg', quantity: 1 }],
+      'stripe_live'
+    );
+    assert.equal(livePending.paymentMode, 'stripe_live');
+
+    const bypassAttempt = await apiJson<{ error: string }>(
+      h.baseUrl,
+      '/api/checkout/confirm-test',
+      {
+        method: 'POST',
+        token: alice.token,
+        body: JSON.stringify({ pendingOrderId: livePending.orderId }),
+      }
+    );
+    assert.equal(bypassAttempt.status, 403);
+
+    // Replaying a signed Stripe webhook twice confirms once and stays 100% idempotent
+    const webhookBody = JSON.stringify({
+      id: 'evt_test_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          client_reference_id: livePending.orderId,
+          metadata: { order_id: livePending.orderId },
+          payment_intent: 'pi_test_123',
+        },
+      },
+    });
+    const ts = Math.floor(Date.now() / 1000);
+    const sig = crypto
+      .createHmac('sha256', process.env.STRIPE_WEBHOOK_SECRET)
+      .update(`${ts}.${webhookBody}`)
+      .digest('hex');
+
+    for (let replay = 0; replay < 2; replay++) {
+      const whRes = await fetch(`${h.baseUrl}/api/webhooks/stripe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': `t=${ts},v1=${sig}`,
+        },
+        body: webhookBody,
+      });
+      assert.equal(whRes.status, 200);
+    }
+
+    const finalState = await apiJson<{ products: ProductWithPool[] }>(h.baseUrl, '/api/state');
+    const basmati = finalState.body.products.find((p) => p.id === 'prod-basmati-5kg')!;
+    assert.equal(basmati.totalClaimedSlots, 1);
+  } finally {
+    if (prevStripeSecret === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = prevStripeSecret;
+    if (prevWebhookSecret === undefined) delete process.env.STRIPE_WEBHOOK_SECRET;
+    else process.env.STRIPE_WEBHOOK_SECRET = prevWebhookSecret;
+    await h.cleanup();
+  }
+});
+
+test('12. Security: HTTP headers, CSP, CORS, production auth guards, and ADMIN_PIN rate limiting (429)', async () => {
+  const h = await startTestServer({ includeDemoPools: false });
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevAdminPin = process.env.ADMIN_PIN;
+  const prevAllowDev = process.env.ALLOW_DEV_LOGIN;
+  const prevPublicUrl = process.env.PUBLIC_BASE_URL;
+  try {
+    // (d) Security headers present on responses
+    const stateRes = await apiJson<{ settings: DropSettings }>(h.baseUrl, '/api/state');
+    assert.equal(stateRes.status, 200);
+    assert.equal(stateRes.headers.get('x-frame-options'), 'DENY');
+    assert.equal(stateRes.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(stateRes.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.equal(
+      stateRes.headers.get('permissions-policy'),
+      'camera=(self), microphone=(), geolocation=()'
+    );
+    assert.equal(stateRes.headers.get('x-powered-by'), null);
+
+    // Production mode guards: CSP header, CORS origin lock, dev-login/devOtpCode block, weak ADMIN_PIN 503
+    process.env.NODE_ENV = 'production';
+    delete process.env.ALLOW_DEV_LOGIN;
+    process.env.PUBLIC_BASE_URL = 'https://divly.co.uk';
+    process.env.ADMIN_PIN = 'uob-admin-2026';
+
+    const prodState = await fetch(`${h.baseUrl}/api/state`, {
+      headers: { Origin: 'https://evil.example.com' },
+    });
+    assert.ok(prodState.headers.get('content-security-policy')?.includes("default-src 'self'"));
+    assert.equal(prodState.headers.get('access-control-allow-origin'), null);
+
+    const allowedCors = await fetch(`${h.baseUrl}/api/state`, {
+      headers: { Origin: 'https://divly.co.uk' },
+    });
+    assert.equal(allowedCors.headers.get('access-control-allow-origin'), 'https://divly.co.uk');
+
+    const blockedDevLogin = await apiJson<{ error: string }>(h.baseUrl, '/api/auth/dev-login', {
+      method: 'POST',
+      body: JSON.stringify({ role: 'student' }),
+    });
+    assert.equal(blockedDevLogin.status, 403);
+
+    const prodOtp = await apiJson<{ ok: boolean; devOtpCode?: string }>(
+      h.baseUrl,
+      '/api/auth/request-otp',
+      {
+        method: 'POST',
+        body: JSON.stringify({ email: 'sec.check@student.bham.ac.uk' }),
+      }
+    );
+    assert.equal(prodOtp.status, 200);
+    assert.equal(prodOtp.body.devOtpCode, undefined);
+
+    const weakPinProd = await apiJson<{ error: string }>(h.baseUrl, '/api/auth/admin-login', {
+      method: 'POST',
+      body: JSON.stringify({ pin: 'uob-admin-2026' }),
+    });
+    assert.equal(weakPinProd.status, 503);
+
+    // Restore strong PIN and test (e) rate limiting returning 429 on repeated wrong ADMIN_PIN attempts
+    process.env.ADMIN_PIN = 'Strong-Campus-Pin-9942!';
+    let statuses: number[] = [];
+    for (let attempt = 0; attempt < 11; attempt++) {
+      const badPin = await apiJson<{ error: string }>(h.baseUrl, '/api/auth/admin-login', {
+        method: 'POST',
+        body: JSON.stringify({ pin: `wrong-pin-${attempt}` }),
+      });
+      statuses.push(badPin.status);
+    }
+    // Note: weakPinProd above consumed 1 attempt out of 10 on `/api/auth/admin-login`
+    assert.ok(statuses.includes(401));
+    assert.equal(statuses[statuses.length - 1], 429);
+  } finally {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevAdminPin === undefined) delete process.env.ADMIN_PIN;
+    else process.env.ADMIN_PIN = prevAdminPin;
+    if (prevAllowDev === undefined) delete process.env.ALLOW_DEV_LOGIN;
+    else process.env.ALLOW_DEV_LOGIN = prevAllowDev;
+    if (prevPublicUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+    else process.env.PUBLIC_BASE_URL = prevPublicUrl;
+    await h.cleanup();
+  }
+});
+
+test('13. Security: Checkout payload bounds (negative/NaN/fractional/duplicate >24), 64kb body cap & SSRF block', async () => {
+  const h = await startTestServer({ includeDemoPools: false });
+  const prevNodeEnv = process.env.NODE_ENV;
+  try {
+    const { token: studentToken } = await loginStudent(h.baseUrl, 'bounds.tester');
+    const adminToken = await loginAdmin(h.baseUrl);
+
+    // (f) Invalid checkout payloads must all be rejected with 400
+    const badPayloads: unknown[] = [
+      { items: [] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: 0 }] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: -3 }] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: 1.5 }] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: null }] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: '2' }] },
+      { items: [{ productId: 'prod-basmati-5kg', quantity: 25 }] },
+      // Duplicate productId bypass attempt: 15 + 10 = 25 > 24 max per item!
+      {
+        items: [
+          { productId: 'prod-basmati-5kg', quantity: 15 },
+          { productId: 'prod-basmati-5kg', quantity: 10 },
+        ],
+      },
+    ];
+
+    for (const payload of badPayloads) {
+      const res = await apiJson<{ error: string }>(h.baseUrl, '/api/checkout/create', {
+        method: 'POST',
+        token: studentToken,
+        body: JSON.stringify(payload),
+      });
+      assert.equal(res.status, 400);
+    }
+
+    // Valid duplicate productId within <= 24 cap merges cleanly (2 + 2 = 4 shares)
+    const mergedOrder = await checkoutAndConfirm(h.baseUrl, studentToken, [
+      { productId: 'prod-basmati-5kg', quantity: 2 },
+      { productId: 'prod-basmati-5kg', quantity: 2 },
+    ]);
+    assert.equal(mergedOrder.allocations.length, 4);
+
+    // Inactive product must be rejected at checkout
+    await apiJson(h.baseUrl, '/api/admin/products/prod-mutti-tomatoes-4pk', {
+      method: 'PUT',
+      token: adminToken,
+      body: JSON.stringify({ isActive: false }),
+    });
+    const inactiveRes = await apiJson<{ error: string }>(h.baseUrl, '/api/checkout/create', {
+      method: 'POST',
+      token: studentToken,
+      body: JSON.stringify({ items: [{ productId: 'prod-mutti-tomatoes-4pk', quantity: 1 }] }),
+    });
+    assert.equal(inactiveRes.status, 400);
+
+    // Request board strips control characters and clamps strings to <= 120 chars
+    const longDirtyName = `  Shin\u0000\u0007\nRamyun ${'X'.repeat(160)}  `;
+    const reqCreated = await apiJson<{ request: ProductRequest }>(h.baseUrl, '/api/requests', {
+      method: 'POST',
+      token: studentToken,
+      body: JSON.stringify({
+        itemName: longDirtyName,
+        brandOrSize: `Bulk\u001FPack ${'Y'.repeat(150)}`,
+        category: 'Rice & Noodles',
+      }),
+    });
+    assert.equal(reqCreated.status, 201);
+    assert.ok(reqCreated.body.request.itemName.length <= 120);
+    assert.equal(/[\u0000-\u001F\u007F]/.test(reqCreated.body.request.itemName), false);
+    assert.ok(reqCreated.body.request.brandOrSize.length <= 120);
+
+    // Oversized JSON payload (>64kb) is rejected with 413 Payload Too Large
+    const hugeRes = await fetch(`${h.baseUrl}/api/requests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${studentToken}`,
+      },
+      body: JSON.stringify({ itemName: 'A'.repeat(80_000) }),
+    });
+    assert.equal(hugeRes.status, 413);
+
+    // SSRF guard blocks AWS/cloud metadata IPs in all modes and http/loopback in production
+    assert.throws(() => validateWholesaleWebhookUrl('http://169.254.169.254/latest/meta-data/'));
+    process.env.NODE_ENV = 'production';
+    assert.throws(() => validateWholesaleWebhookUrl('http://supplier.example.com/edi'));
+    assert.throws(() => validateWholesaleWebhookUrl('https://127.0.0.1:8080/internal'));
+    assert.equal(
+      validateWholesaleWebhookUrl('https://edi.qogita.com/webhooks/orders'),
+      'https://edi.qogita.com/webhooks/orders'
+    );
+  } finally {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    await h.cleanup();
+  }
+});
+
+test('14. Multi-quantity Closer Bonus spillover cap & wallet-credit-first partial refund protection', async () => {
+  const h = await startTestServer({ includeDemoPools: false });
+  try {
+    const adminToken = await loginAdmin(h.baseUrl);
+    const opener = await loginStudent(h.baseUrl, 'box.opener');
+    const spilloverBuyer = await loginStudent(h.baseUrl, 'box.spillover');
+
+    // Opener claims 3/4 slots of TREK Protein (base 295p -> 1 slot left triggers 10% Closer = 266p)
+    await checkoutAndConfirm(h.baseUrl, opener.token, [
+      { productId: 'prod-trek-protein-4pk', quantity: 3 },
+    ]);
+
+    // Spillover buyer orders 3 shares: 1 share closes Case #1 at 266p, 2 spillover shares pay full 295p!
+    const spillOrder = await checkoutAndConfirm(h.baseUrl, spilloverBuyer.token, [
+      { productId: 'prod-trek-protein-4pk', quantity: 3 },
+    ]);
+    assert.equal(spillOrder.subtotalPence, 266 + 295 * 2);
+    assert.equal(spillOrder.closerDiscountTotalPence, 29);
+
+    // Referral wallet credit partial-refund anti-cashout check:
+    const refHost = await loginStudent(h.baseUrl, 'credit.host');
+    const refFriend = await loginStudent(h.baseUrl, 'credit.friend', refHost.user.referralCode);
+    assert.equal(refFriend.user.creditBalancePence, 50);
+
+    // Friend buys full 2-share Oatly case (870p, locks immediately) + 1 Mutti share (299p, stays pooling)
+    // Gross = 1169p (>= 800p -> 0p fee), minus 50p credit = 1119p cash paid
+    const mixedOrder = await checkoutAndConfirm(h.baseUrl, refFriend.token, [
+      { productId: 'prod-oatly-barista-3pk', quantity: 2 },
+      { productId: 'prod-mutti-tomatoes-4pk', quantity: 1 },
+    ]);
+    assert.equal(mixedOrder.totalPaidPence, 1119);
+    assert.equal(mixedOrder.creditAppliedPence, 50);
+
+    // At cutoff, Mutti (299p) auto-refunds: 50p promotional credit is restored to wallet FIRST,
+    // and only the remaining 249p is refunded as cash (so 50p promo credit cannot be cashed out!)
+    await apiJson<AdminSummary>(h.baseUrl, '/api/admin/cutoff', {
+      method: 'POST',
+      token: adminToken,
+    });
+    const friendOrdersAfter = await apiJson<{ orders: Order[] }>(h.baseUrl, '/api/orders/mine', {
+      token: refFriend.token,
+    });
+    const settledMixed = friendOrdersAfter.body.orders[0];
+    assert.equal(settledMixed.status, 'settled');
+    assert.equal(settledMixed.creditRestoredPence, 50);
+    assert.equal(settledMixed.refundedPence, 249);
+    assert.equal(settledMixed.netChargedPence, 870);
+
+    const friendWalletAfter = await apiJson<{ user: AuthUser }>(h.baseUrl, '/api/auth/me', {
+      token: refFriend.token,
+    });
+    assert.equal(friendWalletAfter.body.user.creditBalancePence, 50);
   } finally {
     await h.cleanup();
   }

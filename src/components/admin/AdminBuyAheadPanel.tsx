@@ -289,7 +289,7 @@ export function AdminBuyAheadPanel({
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <a
-                            href={line.qogitaUrl}
+                            href={line.qogitaUrl.startsWith('https://') ? line.qogitaUrl : '#'}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50"
@@ -297,7 +297,7 @@ export function AdminBuyAheadPanel({
                             Qogita <ExternalLink className="h-2.5 w-2.5" />
                           </a>
                           <a
-                            href={line.bookerUrl}
+                            href={line.bookerUrl.startsWith('https://') ? line.bookerUrl : '#'}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-gray-100"
@@ -305,7 +305,7 @@ export function AdminBuyAheadPanel({
                             Booker <ExternalLink className="h-2.5 w-2.5" />
                           </a>
                           <a
-                            href={line.bestwayUrl}
+                            href={line.bestwayUrl.startsWith('https://') ? line.bestwayUrl : '#'}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-0.5 rounded border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-gray-100"

@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,web \"PORT=3001 tsx watch server/index.ts\" \"vite --port 5173\"",
-    "dev:api": "PORT=3001 tsx watch server/index.ts",
+    "dev": "concurrently -k -n api,web \"PORT=3001 tsx watch --ignore 'data/**' --ignore 'tests/**' server/index.ts\" \"vite --port 5173\"",
+    "dev:api": "PORT=3001 tsx watch --ignore 'data/**' --ignore 'tests/**' server/index.ts",
     "dev:web": "vite --port 5173",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production PORT=${PORT:-3000} npx tsx server/index.ts",

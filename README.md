@@ -1,5 +1,9 @@
 # Divly — University of Birmingham Student Bulk-Buying Platform
 
+> **🚀 Launching Divly for Real? Start Here:**
+> - **[SETUP_AND_COSTS.md](./SETUP_AND_COSTS.md)** — **Complete GBP (`£`) Cost Breakdown (`£0/mo` Proxmox vs `~£4/mo` Railway, under `£45` Day-1 total)** + **30-Minute Production Setup Checklist** (`.env` secrets, Stripe UK Apple Pay/Google Pay, Resend OTP DNS & live deploy).
+> - **[LAUNCH_IN_14_DAYS.md](./LAUNCH_IN_14_DAYS.md)** — **Day 1 → Day 14 University of Birmingham campus launch playbook**.
+
 **Divly** lets University of Birmingham (`@student.bham.ac.uk` / `@bham.ac.uk`) students chip in with other students on campus to split factory-sealed wholesale bulk cases (20kg Basmati sacks, 40-pack noodle cartons, UHT oat milk trays, laundry tubs) at prices **15–35% lower than UK supermarket prices**.
 
 Students claim individual shares during the week. At the weekly cutoff, every **100% filled case** (plus any shelf-stable cases safely underwritten by the founder) is fulfilled for Saturday pickup at the UoB campus hub, while unfilled risky overflow slots are **automatically refunded** to the penny.
@@ -87,6 +91,7 @@ Divly runs as a single lightweight container with a persistent volume mounted at
 
 ## Documentation Map
 
+- **[SETUP_AND_COSTS.md](./SETUP_AND_COSTS.md)** — **Complete itemized GBP (`£`) launch cost breakdown (`£0/mo` Proxmox vs `~£4/mo` Railway) & 30-minute production setup checklist** before taking real student payments.
 - **[LAUNCH_IN_14_DAYS.md](./LAUNCH_IN_14_DAYS.md)** — **Step-by-step Day 1 → Day 14 University of Birmingham launch checklist** (council food registration, Stripe Apple Pay, Resend DNS, Booker Aston / Qogita setup, `/flyer.html` hall seeding, Wednesday cutoff, and Saturday hub handover).
 - **[MARKETING_CAMPAIGN.md](./MARKETING_CAMPAIGN.md)** — **Single-location initial user marketing campaign (0 → 100 students)** (cold-start Closer Bonus hooks, WhatsApp peer-locking loops, kitchen tastings, and Saturday hub viral flywheels).
 - **[STUDENT_DEV_GUIDE.md](./STUDENT_DEV_GUIDE.md)** — **Start here if you're maintaining or customizing Divly!** Explains every file, walks through all core algorithms in plain English, and gives copy-paste recipes.

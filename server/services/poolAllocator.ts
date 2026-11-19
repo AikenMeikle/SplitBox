@@ -30,6 +30,9 @@ export interface PendingCheckoutData {
   lineItems: ValidatedLineItem[];
 }
 
+const MAX_SHARES_PER_ITEM = 24;
+const MAX_LINE_ITEMS_PER_ORDER = 50;
+
 /**
  * Validates basket items, applies Almost-Full Closer Discounts + fee waivers,
  * applies available `users.credit_balance_pence` wallet credit, and inserts a
@@ -49,21 +52,36 @@ export function createPendingOrder(
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
     throw new HttpError(400, 'Your basket is empty.');
   }
+  if (rawItems.length > MAX_LINE_ITEMS_PER_ORDER) {
+    throw new HttpError(400, `Basket cannot exceed ${MAX_LINE_ITEMS_PER_ORDER} line items.`);
+  }
 
+  // Merge duplicate `productId` entries BEFORE enforcing the per-item cap (`<= 24`)
   const mergedQty = new Map<string, number>();
   for (const item of rawItems) {
     if (!item || typeof item.productId !== 'string' || !item.productId.trim()) {
       throw new HttpError(400, 'Invalid product in basket.');
     }
-    const qty = Number(item.quantity);
-    if (!Number.isInteger(qty) || qty < 1 || qty > 50) {
-      throw new HttpError(400, 'Item quantity must be a whole number between 1 and 50.');
+    const productId = item.productId.trim();
+    if (
+      typeof item.quantity !== 'number' ||
+      !Number.isInteger(item.quantity) ||
+      item.quantity < 1 ||
+      item.quantity > MAX_SHARES_PER_ITEM
+    ) {
+      throw new HttpError(
+        400,
+        `Item quantity must be a whole number between 1 and ${MAX_SHARES_PER_ITEM}.`
+      );
     }
-    const next = (mergedQty.get(item.productId) ?? 0) + qty;
-    if (next > 50) {
-      throw new HttpError(400, 'Maximum 50 shares per item per order.');
+    const next = (mergedQty.get(productId) ?? 0) + item.quantity;
+    if (next > MAX_SHARES_PER_ITEM) {
+      throw new HttpError(
+        400,
+        `Maximum ${MAX_SHARES_PER_ITEM} shares per item per order.`
+      );
     }
-    mergedQty.set(item.productId, next);
+    mergedQty.set(productId, next);
   }
 
   const lineItems: ValidatedLineItem[] = [];
@@ -78,22 +96,41 @@ export function createPendingOrder(
       throw new HttpError(400, `Product "${productId}" is no longer available.`);
     }
 
-    const chargedSharePence = p.effectiveSharePricePence;
-    subtotalPence += chargedSharePence * quantity;
+    // Cap Closer Bonus discount strictly to the open-box closing slots so spillover shares pay normal case price
+    const discountedQty =
+      p.isAlmostFull && p.closerDiscountPence > 0
+        ? Math.min(quantity, Math.max(0, p.openCaseRemainingSlots))
+        : 0;
+    const regularQty = quantity - discountedQty;
+
+    subtotalPence +=
+      discountedQty * p.effectiveSharePricePence + regularQty * p.sharePricePence;
     totalAldiComparisonPence += p.aldiPricePence * quantity;
-    closerDiscountTotalPence += p.closerDiscountPence * quantity;
+    closerDiscountTotalPence += p.closerDiscountPence * discountedQty;
     if (p.waivesSmallOrderFee) {
       anyWaivesSmallOrderFee = true;
     }
 
-    lineItems.push({
-      productId,
-      productName: `${p.brand} ${p.name}`,
-      unitDescription: p.unitDescription,
-      sharePricePence: chargedSharePence,
-      aldiPricePence: p.aldiPricePence,
-      quantity,
-    });
+    if (discountedQty > 0) {
+      lineItems.push({
+        productId,
+        productName: `${p.brand} ${p.name}`,
+        unitDescription: p.unitDescription,
+        sharePricePence: p.effectiveSharePricePence,
+        aldiPricePence: p.aldiPricePence,
+        quantity: discountedQty,
+      });
+    }
+    if (regularQty > 0) {
+      lineItems.push({
+        productId,
+        productName: `${p.brand} ${p.name}`,
+        unitDescription: p.unitDescription,
+        sharePricePence: p.sharePricePence,
+        aldiPricePence: p.aldiPricePence,
+        quantity: regularQty,
+      });
+    }
   }
 
   const feePence =
@@ -191,7 +228,11 @@ export function attachStripeSessionToOrder(
 export function confirmOrderPayment(
   db: DatabaseSync,
   orderId: string,
-  options?: { stripePaymentIntentId?: string | null; expectedUserId?: string }
+  options?: {
+    stripePaymentIntentId?: string | null;
+    expectedUserId?: string;
+    allowLiveStripe?: boolean;
+  }
 ): Order {
   return runImmediateTransaction(db, () => {
     const orderRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId) as
@@ -204,6 +245,10 @@ export function confirmOrderPayment(
 
     if (options?.expectedUserId && String(orderRow.user_id) !== options.expectedUserId) {
       throw new HttpError(403, 'You are not authorised to confirm this order.');
+    }
+
+    if (!options?.allowLiveStripe && String(orderRow.payment_mode) === 'stripe_live') {
+      throw new HttpError(403, 'Live Stripe orders must be confirmed via Stripe Checkout.');
     }
 
     if (String(orderRow.status) !== 'pending_payment') {
@@ -222,15 +267,14 @@ export function confirmOrderPayment(
     const creditAppliedPence = Math.max(0, Number(orderRow.credit_applied_pence || 0));
 
     if (creditAppliedPence > 0) {
-      const uRow = db
-        .prepare('SELECT credit_balance_pence FROM users WHERE id = ?')
-        .get(userId) as { credit_balance_pence: number } | undefined;
-      if (!uRow || Number(uRow.credit_balance_pence) < creditAppliedPence) {
+      const deductRes = db
+        .prepare(
+          'UPDATE users SET credit_balance_pence = credit_balance_pence - ? WHERE id = ? AND credit_balance_pence >= ?'
+        )
+        .run(creditAppliedPence, userId, creditAppliedPence);
+      if (Number(deductRes.changes) !== 1) {
         throw new HttpError(409, 'Wallet credit was already spent on another order.');
       }
-      db.prepare(
-        'UPDATE users SET credit_balance_pence = credit_balance_pence - ? WHERE id = ?'
-      ).run(creditAppliedPence, userId);
     }
 
     const items = JSON.parse(String(orderRow.items_json)) as Array<{
@@ -239,7 +283,7 @@ export function confirmOrderPayment(
       unitPricePence?: number;
     }>;
 
-    const getProductStmt = db.prepare('SELECT * FROM products WHERE id = ?');
+    const getProductStmt = db.prepare('SELECT * FROM products WHERE id = ? AND deleted_at IS NULL');
     const getNextPoolSlotStmt = db.prepare(`
       SELECT COALESCE(MAX(CASE WHEN box_number >= 1 THEN global_slot_index ELSE -1 END), -1) + 1 AS next_slot
       FROM pool_allocations
@@ -251,7 +295,9 @@ export function confirmOrderPayment(
       WHERE drop_cycle_number = ? AND product_id = ?
     `);
     const decrementCarryoverStmt = db.prepare(`
-      UPDATE products SET carryover_stock_slots = carryover_stock_slots - 1 WHERE id = ?
+      UPDATE products
+      SET carryover_stock_slots = carryover_stock_slots - 1
+      WHERE id = ? AND carryover_stock_slots > 0
     `);
     const insertAllocStmt = db.prepare(`
       INSERT INTO pool_allocations (
@@ -350,12 +396,17 @@ export function confirmOrderPayment(
       }
     }
 
-    db.prepare(`
-      UPDATE orders
-      SET status = 'paid_pooling',
-          stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
-      WHERE id = ?
-    `).run(options?.stripePaymentIntentId ?? null, orderId);
+    const statusUpdate = db
+      .prepare(`
+        UPDATE orders
+        SET status = 'paid_pooling',
+            stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
+        WHERE id = ? AND status = 'pending_payment'
+      `)
+      .run(options?.stripePaymentIntentId ?? null, orderId);
+    if (Number(statusUpdate.changes) !== 1) {
+      throw new HttpError(409, 'Order payment state changed concurrently.');
+    }
 
     // Award £1.00 (100p) credit to the referrer upon the referred friend's first confirmed order!
     const refState = db

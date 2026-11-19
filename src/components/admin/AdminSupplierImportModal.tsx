@@ -224,7 +224,7 @@ export function AdminSupplierImportModal({
                     <p className="font-bold text-emerald-700">
                       Share {formatPence(item.suggestedSharePricePence)}{' '}
                       <span className="font-normal text-slate-400 line-through">
-                        Aldi {formatPence(item.estimatedAldiPricePence)}
+                        Supermarket {formatPence(item.estimatedAldiPricePence)}
                       </span>
                     </p>
                     <p className="text-[11px] text-slate-500">
@@ -235,7 +235,12 @@ export function AdminSupplierImportModal({
 
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2.5">
                   <a
-                    href={item.supplierPortalUrl}
+                    href={
+                      typeof item.supplierPortalUrl === 'string' &&
+                      item.supplierPortalUrl.startsWith('https://')
+                        ? item.supplierPortalUrl
+                        : 'https://www.qogita.com'
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-emerald-700"

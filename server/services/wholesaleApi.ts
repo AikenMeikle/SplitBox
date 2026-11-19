@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import net from 'node:net';
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   LiveSupplierProductResult,
@@ -7,10 +8,78 @@ import type {
 } from '../../src/shared/types.ts';
 import { getSettings, HttpError } from '../db.ts';
 
+/**
+ * Validates `WHOLESALE_ORDER_WEBHOOK_URL` to prevent Server-Side Request Forgery (SSRF).
+ * Blocks cloud metadata (`169.254.169.254`) & link-local IPs in all environments, and
+ * enforces `https:` + blocks loopback/private RFC1918 networks in production.
+ */
+export function validateWholesaleWebhookUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    throw new HttpError(400, 'Invalid WHOLESALE_ORDER_WEBHOOK_URL format.');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new HttpError(400, 'Webhook URL must not embed credentials.');
+  }
+
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && parsed.protocol !== 'https:') {
+    throw new HttpError(400, 'WHOLESALE_ORDER_WEBHOOK_URL must use https:// in production.');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new HttpError(400, 'WHOLESALE_ORDER_WEBHOOK_URL must use https:// or http://.');
+  }
+
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+
+  // Always block cloud instance metadata & link-local addresses
+  if (
+    host === '169.254.169.254' ||
+    host.startsWith('169.254.') ||
+    host === '100.100.100.200' ||
+    host === 'metadata.google.internal' ||
+    host.startsWith('fe80:')
+  ) {
+    throw new HttpError(400, 'Blocked unsafe link-local or cloud metadata webhook target.');
+  }
+
+  if (isProd) {
+    if (
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host === '0.0.0.0' ||
+      host === '::' ||
+      host === '::1' ||
+      host.startsWith('127.') ||
+      host.startsWith('10.') ||
+      host.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.startsWith('fc') ||
+      host.startsWith('fd') ||
+      (net.isIP(host) === 6 && host.startsWith('::ffff:127.'))
+    ) {
+      throw new HttpError(400, 'Blocked loopback or private-network webhook target in production.');
+    }
+  }
+
+  return parsed.toString();
+}
+
 export function isWholesaleApiConfigured(): boolean {
-  return Boolean(
-    process.env.QOGITA_API_KEY?.trim() || process.env.WHOLESALE_ORDER_WEBHOOK_URL?.trim()
-  );
+  if (process.env.QOGITA_API_KEY?.trim()) return true;
+  const rawWebhook = process.env.WHOLESALE_ORDER_WEBHOOK_URL?.trim();
+  if (!rawWebhook) return false;
+  try {
+    validateWholesaleWebhookUrl(rawWebhook);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Infers Divly grocery category, shelf life, and sensible bulk case economics from UK food metadata. */
@@ -410,11 +479,12 @@ export async function createWholesalePurchaseOrder(
       // Keep `submitted` with local PO reference if remote sandbox unreachable
     }
   } else if (webhookUrl) {
+    const safeWebhookUrl = validateWholesaleWebhookUrl(webhookUrl);
     mode = 'webhook_edi_live';
     supplierName = 'Wholesale EDI Webhook';
     status = 'submitted';
     try {
-      const wRes = await fetch(webhookUrl, {
+      const wRes = await fetch(safeWebhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -424,6 +494,7 @@ export async function createWholesalePurchaseOrder(
           totalSpendPence,
           lines: portalLinks,
         }),
+        redirect: 'error',
         signal: AbortSignal.timeout(4500),
       });
       if (wRes.ok) status = 'confirmed';

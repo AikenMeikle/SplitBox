@@ -4,13 +4,45 @@ import type { AuthUser } from '../../src/shared/types.ts';
 import { generateUniqueReferralCode, HttpError, runImmediateTransaction } from '../db.ts';
 
 const ALLOWED_CAMPUS_DOMAINS = ['@student.bham.ac.uk', '@bham.ac.uk'];
+export const DEFAULT_DEV_HMAC_SECRET = 'divly-dev-hmac-secret-change-in-prod';
+export const DEFAULT_DEV_ADMIN_PIN = 'uob-admin-2026';
+const MAX_OTP_FAILED_ATTEMPTS = 5;
 
 export function isDevMode(): boolean {
   return process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_LOGIN === 'true';
 }
 
 function getOtpSecret(): string {
-  return process.env.QR_HMAC_SECRET || 'divly-dev-hmac-secret-change-in-prod';
+  return process.env.QR_HMAC_SECRET?.trim() || DEFAULT_DEV_HMAC_SECRET;
+}
+
+/** Logs clear startup warnings if production mode is missing strong secrets. */
+export function warnIfInsecureProductionSecrets(): void {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const qrSecret = process.env.QR_HMAC_SECRET?.trim();
+  if (!qrSecret || qrSecret === DEFAULT_DEV_HMAC_SECRET) {
+    console.warn(
+      '[Divly Security Warning] QR_HMAC_SECRET is unset or using the dev fallback in production! Generate a random 32-byte hex secret in .env.'
+    );
+  }
+
+  const adminPin = process.env.ADMIN_PIN?.trim();
+  if (!adminPin || adminPin === DEFAULT_DEV_ADMIN_PIN) {
+    console.warn(
+      '[Divly Security Warning] ADMIN_PIN is unset or set to default "uob-admin-2026" in production! /api/auth/admin-login will return 503 until updated.'
+    );
+  }
+}
+
+function cleanDisplayName(rawName?: string): string | undefined {
+  if (!rawName) return undefined;
+  const cleaned = rawName
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+  return cleaned || undefined;
 }
 
 function getAdminEmailSet(): Set<string> {
@@ -76,9 +108,10 @@ function upsertUser(
     .prepare('SELECT * FROM users WHERE email = ?')
     .get(normalizedEmail) as Record<string, unknown> | undefined;
 
+  const safePreferredName = cleanDisplayName(preferredName);
   if (existing) {
     const nextRole = role === 'admin' || existing.role === 'admin' ? 'admin' : 'student';
-    const nextName = preferredName?.trim() || String(existing.name);
+    const nextName = safePreferredName || String(existing.name);
     const refCode =
       String(existing.referral_code || '').trim() || generateUniqueReferralCode(db);
     db.prepare('UPDATE users SET name = ?, role = ?, referral_code = ? WHERE id = ?').run(
@@ -91,7 +124,7 @@ function upsertUser(
   }
 
   const id = `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-  const finalName = preferredName?.trim() || deriveNameFromEmail(normalizedEmail);
+  const finalName = safePreferredName || deriveNameFromEmail(normalizedEmail);
   const referralCode = generateUniqueReferralCode(db);
   db.prepare(`
     INSERT INTO users (
@@ -229,31 +262,70 @@ export function verifyOtp(
     throw new HttpError(400, 'Enter your UoB email and 6-digit verification code.');
   }
 
-  const row = db
-    .prepare(
-      'SELECT * FROM otp_codes WHERE email = ? AND used = 0 ORDER BY created_at DESC LIMIT 1'
-    )
-    .get(email) as Record<string, unknown> | undefined;
+  // Verify OTP inside an immediate write transaction so a code can never be replayed
+  // concurrently, and burn the OTP if too many wrong attempts target the same email.
+  let otpError: HttpError | null = null;
+  runImmediateTransaction(db, () => {
+    const row = db
+      .prepare(
+        'SELECT * FROM otp_codes WHERE email = ? AND used = 0 ORDER BY created_at DESC LIMIT 1'
+      )
+      .get(email) as Record<string, unknown> | undefined;
 
-  if (!row) {
-    throw new HttpError(401, 'No active verification code found for this email.');
+    if (!row) {
+      otpError = new HttpError(401, 'No active verification code found for this email.');
+      return;
+    }
+
+    const otpId = String(row.id);
+    if (new Date(String(row.expires_at)).getTime() < Date.now()) {
+      db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(otpId);
+      otpError = new HttpError(401, 'Verification code has expired. Please request a new one.');
+      return;
+    }
+
+    // Constant-time comparison on fixed 32-byte SHA-256 digests
+    const expectedDigest = crypto
+      .createHash('sha256')
+      .update(String(row.code_hash), 'utf8')
+      .digest();
+    const providedDigest = crypto
+      .createHash('sha256')
+      .update(hashOtp(email, code), 'utf8')
+      .digest();
+
+    if (!crypto.timingSafeEqual(expectedDigest, providedDigest)) {
+      const nextFailures = Number(row.failed_attempts || 0) + 1;
+      if (nextFailures >= MAX_OTP_FAILED_ATTEMPTS) {
+        db.prepare('UPDATE otp_codes SET used = 1, failed_attempts = ? WHERE id = ?').run(
+          nextFailures,
+          otpId
+        );
+        otpError = new HttpError(
+          401,
+          'Too many incorrect attempts. Please request a new 6-digit verification code.'
+        );
+      } else {
+        db.prepare('UPDATE otp_codes SET failed_attempts = ? WHERE id = ?').run(
+          nextFailures,
+          otpId
+        );
+        otpError = new HttpError(401, 'Incorrect 6-digit verification code.');
+      }
+      return;
+    }
+
+    const markUsed = db
+      .prepare('UPDATE otp_codes SET used = 1 WHERE id = ? AND used = 0')
+      .run(otpId);
+    if (Number(markUsed.changes) !== 1) {
+      otpError = new HttpError(401, 'Verification code has already been used.');
+    }
+  });
+
+  if (otpError) {
+    throw otpError;
   }
-
-  if (new Date(String(row.expires_at)).getTime() < Date.now()) {
-    throw new HttpError(401, 'Verification code has expired. Please request a new one.');
-  }
-
-  const expectedBuf = Buffer.from(String(row.code_hash), 'hex');
-  const providedBuf = Buffer.from(hashOtp(email, code), 'hex');
-
-  if (
-    expectedBuf.length !== providedBuf.length ||
-    !crypto.timingSafeEqual(expectedBuf, providedBuf)
-  ) {
-    throw new HttpError(401, 'Incorrect 6-digit verification code.');
-  }
-
-  db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(String(row.id));
 
   const role = getAdminEmailSet().has(email) ? 'admin' : 'student';
   const baseUser = upsertUser(db, email, rawName, role);
@@ -269,7 +341,18 @@ export function adminLogin(
   rawPin: string,
   rawEmail?: string
 ): { token: string; user: AuthUser } {
-  const expectedPin = process.env.ADMIN_PIN || 'uob-admin-2026';
+  const configuredPin = process.env.ADMIN_PIN?.trim();
+  if (
+    process.env.NODE_ENV === 'production' &&
+    (!configuredPin || configuredPin === DEFAULT_DEV_ADMIN_PIN)
+  ) {
+    throw new HttpError(
+      503,
+      'Admin login is disabled in production until a strong ADMIN_PIN is set in .env.'
+    );
+  }
+
+  const expectedPin = configuredPin || DEFAULT_DEV_ADMIN_PIN;
   const providedDigest = crypto.createHash('sha256').update(String(rawPin || '')).digest();
   const expectedDigest = crypto.createHash('sha256').update(expectedPin).digest();
 
@@ -277,7 +360,11 @@ export function adminLogin(
     throw new HttpError(401, 'Invalid Admin PIN.');
   }
 
-  const email = rawEmail?.trim().toLowerCase() || 'admin@bham.ac.uk';
+  const candidateEmail = rawEmail?.trim().toLowerCase();
+  const email =
+    candidateEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidateEmail) && candidateEmail.length <= 120
+      ? candidateEmail
+      : 'admin@bham.ac.uk';
   const user = upsertUser(db, email, 'UoB Drop Admin', 'admin');
   const token = issueSession(db, user.id);
 

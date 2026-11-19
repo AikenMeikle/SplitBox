@@ -1,5 +1,8 @@
 # Divly — Launch at the University of Birmingham in 14 Days
 
+> **💷 Before Taking Real Student Payments — Read First:**
+> See **[SETUP_AND_COSTS.md](./SETUP_AND_COSTS.md)** for the **complete itemized `£` GBP cost breakdown** (`£0.00/month` Proxmox + Cloudflare Tunnel vs `~£4.00/month` Railway Cloud, **under `£45` Day-1 cash needed**) and the **exact 30-minute technical setup checklist** (`.env` production secrets, Stripe UK Apple Pay/Google Pay webhooks, Resend `@student.bham.ac.uk` DNS, and live smoke test).
+
 This is your practical, day-by-day execution manual to take **Divly** from code on your laptop to paying University of Birmingham students collecting their first bulk grocery bags at The Vale in **14 days**.
 
 ---

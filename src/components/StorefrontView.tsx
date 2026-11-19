@@ -157,7 +157,13 @@ export function StorefrontView() {
       if (qty <= 0) continue;
       const item = products.find((p) => p.id === productId);
       if (item) {
-        subtotalPence += item.effectiveSharePricePence * qty;
+        const discountedQty =
+          item.isAlmostFull && item.closerDiscountPence > 0
+            ? Math.min(qty, Math.max(0, item.openCaseRemainingSlots))
+            : 0;
+        subtotalPence +=
+          discountedQty * item.effectiveSharePricePence +
+          (qty - discountedQty) * item.sharePricePence;
         supermarketTotalPence += item.aldiPricePence * qty;
         if (item.waivesSmallOrderFee) waivesFee = true;
       }

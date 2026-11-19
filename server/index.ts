@@ -30,6 +30,7 @@ import {
   logoutByAuthHeader,
   requestOtp,
   verifyOtp,
+  warnIfInsecureProductionSecrets,
 } from './services/auth.ts';
 import {
   attachStripeSessionToOrder,
@@ -44,6 +45,7 @@ import {
   updateProductRequestStatus,
 } from './services/productRequests.ts';
 import { collectOrder, verifyScanInput } from './services/qrPass.ts';
+import { createRateLimiterStore } from './services/rateLimit.ts';
 import { SseHub } from './services/realtime.ts';
 import { getAdminSummary, runWeeklyCutoff, startNewDropCycle } from './services/settlement.ts';
 import {
@@ -57,36 +59,161 @@ import {
   searchLiveWholesaleCatalog,
 } from './services/wholesaleApi.ts';
 
+const PRODUCTION_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data: https:",
+  "media-src 'self' blob:",
+  "connect-src 'self' https://api.stripe.com",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self' https://checkout.stripe.com",
+].join('; ');
+
+function parseConfiguredOrigin(): string | null {
+  const raw = process.env.PUBLIC_BASE_URL?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.origin;
+    }
+  } catch {
+    // Ignore malformed PUBLIC_BASE_URL and fall back to strict same-origin
+  }
+  return null;
+}
+
+function resolveCheckoutBaseUrl(req: Request): string {
+  const configuredOrigin = parseConfiguredOrigin();
+  if (configuredOrigin) return configuredOrigin;
+
+  const rawHost = String(req.get('host') ?? '').trim();
+  if (!/^[a-zA-Z0-9.-]+(:\d{1,5})?$/.test(rawHost)) {
+    throw new HttpError(400, 'Invalid Host header for checkout redirect.');
+  }
+  const proto = req.protocol === 'https' ? 'https' : 'http';
+  return `${proto}://${rawHost}`;
+}
+
+function safeInt(val: unknown, fallback: number, min: number, max = 10_000_000): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(num)));
+}
+
+function cleanText(val: unknown, maxLen = 160): string {
+  return String(val ?? '')
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
 export function createApp(db: DatabaseSync): express.Express {
   const app = express();
   const sseHub = new SseHub();
+  const rateLimit = createRateLimiterStore();
 
-  app.use(cors());
+  app.disable('x-powered-by');
+  if (process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
 
-  // 1. Raw body Stripe webhook MUST be mounted before `express.json()`.
-  app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), (req, res) => {
-    const sigHeader = req.headers['stripe-signature'];
-    const sig = Array.isArray(sigHeader) ? sigHeader[0] : sigHeader;
-    const rawBuf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
-
-    const event = verifyStripeWebhookEvent(rawBuf, sig);
-    if (event.type === 'checkout.session.completed') {
-      const obj = (event.data as { object?: Record<string, unknown> } | undefined)?.object;
-      const meta = (obj?.metadata as Record<string, unknown> | undefined) ?? {};
-      const orderId =
-        (typeof meta.order_id === 'string' && meta.order_id) ||
-        (typeof obj?.client_reference_id === 'string' ? obj.client_reference_id : null);
-      const paymentIntentId = typeof obj?.payment_intent === 'string' ? obj.payment_intent : null;
-
-      if (orderId) {
-        confirmOrderPayment(db, orderId, { stripePaymentIntentId: paymentIntentId });
-        sseHub.broadcast('pool_updated');
-      }
+  // Global HTTP security headers (allows same-origin camera for Admin QR scanner)
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Content-Security-Policy', PRODUCTION_CSP);
     }
-    res.json({ received: true });
+    next();
   });
 
-  app.use(express.json({ limit: '256kb' }));
+  // Restrict CORS in production to PUBLIC_BASE_URL when set (permissive only in dev)
+  app.use(
+    cors({
+      origin(requestOrigin, callback) {
+        if (process.env.NODE_ENV !== 'production') {
+          callback(null, true);
+          return;
+        }
+        if (!requestOrigin) {
+          callback(null, true);
+          return;
+        }
+        const allowedOrigin = parseConfiguredOrigin();
+        callback(null, Boolean(allowedOrigin && requestOrigin === allowedOrigin));
+      },
+    })
+  );
+
+  // 1. Raw body Stripe webhook MUST be mounted before `express.json()`.
+  app.post(
+    '/api/webhooks/stripe',
+    express.raw({ type: 'application/json', limit: '256kb' }),
+    (req, res) => {
+      const sigHeader = req.headers['stripe-signature'];
+      const sig = Array.isArray(sigHeader) ? sigHeader[0] : sigHeader;
+      const rawBuf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
+
+      const event = verifyStripeWebhookEvent(rawBuf, sig);
+      if (event.type === 'checkout.session.completed') {
+        const obj = (event.data as { object?: Record<string, unknown> } | undefined)?.object;
+        const meta = (obj?.metadata as Record<string, unknown> | undefined) ?? {};
+        const orderId =
+          (typeof meta.order_id === 'string' && meta.order_id) ||
+          (typeof obj?.client_reference_id === 'string' ? obj.client_reference_id : null);
+        const paymentIntentId = typeof obj?.payment_intent === 'string' ? obj.payment_intent : null;
+
+        if (orderId) {
+          confirmOrderPayment(db, orderId, {
+            stripePaymentIntentId: paymentIntentId,
+            allowLiveStripe: true,
+          });
+          sseHub.broadcast('pool_updated');
+        }
+      }
+      res.json({ received: true });
+    }
+  );
+
+  app.use(express.json({ limit: '64kb' }));
+
+  const limitRequestOtp = rateLimit({
+    scope: 'auth-request-otp',
+    maxRequests: 8,
+    windowMs: 10 * 60_000,
+    message: 'Too many verification code requests. Please wait a few minutes and try again.',
+  });
+  const limitVerifyOtp = rateLimit({
+    scope: 'auth-verify-otp',
+    maxRequests: 10,
+    windowMs: 10 * 60_000,
+    message: 'Too many OTP verification attempts. Please wait 10 minutes and try again.',
+  });
+  const limitAdminLogin = rateLimit({
+    scope: 'auth-admin-login',
+    maxRequests: 10,
+    windowMs: 10 * 60_000,
+    message: 'Too many Admin PIN attempts. Please wait 10 minutes before retrying.',
+  });
+  const limitRequestsBoard = rateLimit({
+    scope: 'student-requests',
+    maxRequests: 30,
+    windowMs: 60_000,
+    message: 'Rate limit reached for item requests. Please wait a minute.',
+  });
+  const limitScanVerify = rateLimit({
+    scope: 'admin-scan-verify',
+    maxRequests: 30,
+    windowMs: 60_000,
+    message: 'Too many QR/PIN scan lookups per minute. Slow down briefly.',
+  });
 
   function requireUser(req: Request): AuthUser {
     const user = getUserFromAuthHeader(db, req.headers.authorization);
@@ -112,6 +239,8 @@ export function createApp(db: DatabaseSync): express.Express {
   });
 
   app.get('/api/events', (req, res) => sseHub.subscribe(req, res));
+
+  app.use('/api/requests', limitRequestsBoard);
 
   app.get('/api/requests', (req, res) => {
     const viewer = getUserFromAuthHeader(db, req.headers.authorization);
@@ -142,12 +271,12 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json({ user: getUserFromAuthHeader(db, req.headers.authorization) });
   });
 
-  app.post('/api/auth/request-otp', async (req, res) => {
+  app.post('/api/auth/request-otp', limitRequestOtp, async (req, res) => {
     const { email, name } = (req.body ?? {}) as { email?: string; name?: string };
     res.json(await requestOtp(db, String(email ?? ''), name));
   });
 
-  app.post('/api/auth/verify-otp', (req, res) => {
+  app.post('/api/auth/verify-otp', limitVerifyOtp, (req, res) => {
     const { email, code, name, referralCode } = (req.body ?? {}) as Record<
       string,
       string | undefined
@@ -155,7 +284,7 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json(verifyOtp(db, String(email ?? ''), String(code ?? ''), name, referralCode));
   });
 
-  app.post('/api/auth/admin-login', (req, res) => {
+  app.post('/api/auth/admin-login', limitAdminLogin, (req, res) => {
     const { pin, email } = (req.body ?? {}) as { pin?: string; email?: string };
     res.json(adminLogin(db, String(pin ?? ''), email));
   });
@@ -196,8 +325,7 @@ export function createApp(db: DatabaseSync): express.Express {
     );
 
     if (pending.paymentMode === 'stripe_live') {
-      const baseUrl =
-        process.env.PUBLIC_BASE_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+      const baseUrl = resolveCheckoutBaseUrl(req);
       const stripeLineItems =
         pending.creditAppliedPence > 0
           ? [
@@ -247,24 +375,19 @@ export function createApp(db: DatabaseSync): express.Express {
   app.post('/api/checkout/confirm-test', (req, res) => {
     const user = requireUser(req);
     const { pendingOrderId } = (req.body ?? {}) as { pendingOrderId?: string };
-    if (!pendingOrderId) throw new HttpError(400, 'Missing pendingOrderId.');
+    const cleanOrderId = typeof pendingOrderId === 'string' ? pendingOrderId.trim() : '';
+    if (!cleanOrderId) throw new HttpError(400, 'Missing pendingOrderId.');
 
-    const existing = db
-      .prepare('SELECT payment_mode FROM orders WHERE id = ?')
-      .get(pendingOrderId) as { payment_mode: string } | undefined;
-    if (!existing) throw new HttpError(404, 'Pending order not found.');
-    if (existing.payment_mode === 'stripe_live') {
-      throw new HttpError(403, 'Live Stripe orders must be confirmed via Stripe Checkout.');
-    }
-
-    const order = confirmOrderPayment(db, pendingOrderId, {
-      expectedUserId: user.role === 'admin' ? undefined : user.id,
+    const order = confirmOrderPayment(db, cleanOrderId, {
+      expectedUserId: user.id,
+      allowLiveStripe: false,
     });
     sseHub.broadcast('pool_updated');
     res.json({ order });
   });
 
   app.get('/api/checkout/verify-session', async (req, res) => {
+    const user = requireUser(req);
     const sessionId = String(req.query.session_id ?? '').trim();
     if (!sessionId) throw new HttpError(400, 'Missing session_id query parameter.');
 
@@ -273,8 +396,16 @@ export function createApp(db: DatabaseSync): express.Express {
       if (!verified.paid || !verified.orderId) {
         throw new HttpError(400, 'Stripe Checkout session has not been paid yet.');
       }
+      const orderRow = db
+        .prepare('SELECT user_id, stripe_session_id FROM orders WHERE id = ?')
+        .get(verified.orderId) as { user_id: string; stripe_session_id: string | null } | undefined;
+      if (!orderRow || orderRow.stripe_session_id !== sessionId) {
+        throw new HttpError(404, 'Matching checkout order not found.');
+      }
       const order = confirmOrderPayment(db, verified.orderId, {
         stripePaymentIntentId: verified.paymentIntentId,
+        expectedUserId: user.role === 'admin' ? undefined : user.id,
+        allowLiveStripe: true,
       });
       sseHub.broadcast('pool_updated');
       res.json({ order });
@@ -282,9 +413,13 @@ export function createApp(db: DatabaseSync): express.Express {
     }
 
     const row = db
-      .prepare('SELECT id FROM orders WHERE stripe_session_id = ?')
-      .get(sessionId) as { id: string } | undefined;
-    const order = row ? getOrderById(db, row.id) : null;
+      .prepare('SELECT id, user_id FROM orders WHERE stripe_session_id = ?')
+      .get(sessionId) as { id: string; user_id: string } | undefined;
+    if (!row) throw new HttpError(404, 'Checkout session not found.');
+    if (user.role !== 'admin' && String(row.user_id) !== user.id) {
+      throw new HttpError(403, 'You are not authorised to view this order.');
+    }
+    const order = getOrderById(db, row.id);
     if (!order) throw new HttpError(404, 'Checkout session not found.');
     res.json({ order });
   });
@@ -329,17 +464,17 @@ export function createApp(db: DatabaseSync): express.Express {
           cutoff_at_iso = ?, drop_status = ?, free_delivery_threshold_pence = ?, small_order_fee_pence = ?
       WHERE id = 1
     `).run(
-      p.hubName?.trim() || c.hubName,
-      p.hubShortLabel?.trim() || c.hubShortLabel,
-      p.hubAddress?.trim() || c.hubAddress,
-      p.pickupWindow?.trim() || c.pickupWindow,
-      p.cutoffAtIso?.trim() || c.cutoffAtIso,
+      cleanText(p.hubName, 120) || c.hubName,
+      cleanText(p.hubShortLabel, 80) || c.hubShortLabel,
+      cleanText(p.hubAddress, 200) || c.hubAddress,
+      cleanText(p.pickupWindow, 80) || c.pickupWindow,
+      cleanText(p.cutoffAtIso, 60) || c.cutoffAtIso,
       p.dropStatus === 'open' || p.dropStatus === 'closed' ? p.dropStatus : c.dropStatus,
       p.freeDeliveryThresholdPence !== undefined
-        ? Math.max(0, Math.round(Number(p.freeDeliveryThresholdPence)))
+        ? safeInt(p.freeDeliveryThresholdPence, c.freeDeliveryThresholdPence, 0, 100_000)
         : c.freeDeliveryThresholdPence,
       p.smallOrderFeePence !== undefined
-        ? Math.max(0, Math.round(Number(p.smallOrderFeePence)))
+        ? safeInt(p.smallOrderFeePence, c.smallOrderFeePence, 0, 10_000)
         : c.smallOrderFeePence
     );
     sseHub.broadcast('drop_updated');
@@ -388,11 +523,11 @@ export function createApp(db: DatabaseSync): express.Express {
   app.post('/api/admin/products', (req, res) => {
     requireAdmin(req);
     const b = (req.body ?? {}) as Partial<Omit<Product, 'id'>>;
-    const name = String(b.name ?? '').trim();
-    const brand = String(b.brand ?? '').trim();
+    const name = cleanText(b.name, 140);
+    const brand = cleanText(b.brand, 100);
     if (!name || !brand) throw new HttpError(400, 'Product name and brand are required.');
 
-    const caseSize = Math.max(1, Math.round(Number(b.caseSize ?? 4)));
+    const caseSize = safeInt(b.caseSize ?? 4, 4, 1, 500);
     const id = `prod_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const sortRow = db
       .prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort FROM products')
@@ -409,20 +544,20 @@ export function createApp(db: DatabaseSync): express.Express {
       id,
       name,
       brand,
-      String(b.category ?? 'Cooking Staples').trim(),
-      String(b.imageEmoji || '🛒'),
-      String(b.unitDescription || '1 bulk unit'),
-      String(b.caseDescription || `${caseSize} units per wholesale case`),
+      cleanText(b.category, 60) || 'Cooking Staples',
+      cleanText(b.imageEmoji, 16) || '🛒',
+      cleanText(b.unitDescription, 140) || '1 bulk unit',
+      cleanText(b.caseDescription, 160) || `${caseSize} units per wholesale case`,
       caseSize,
-      Math.max(0, Math.round(Number(b.sharePricePence ?? 0))),
-      Math.max(0, Math.round(Number(b.aldiPricePence ?? 0))),
-      String(b.aldiUnitLabel || 'Supermarket equiv.'),
-      Math.max(0, Math.round(Number(b.wholesaleCaseCostPence ?? 0))),
-      String(b.eanBarcode ?? '').trim(),
-      String(b.supplierSku ?? '').trim(),
-      String(b.supplierName ?? 'Qogita / Booker UK').trim(),
-      Math.max(1, Math.round(Number(b.shelfLifeWeeks ?? 26))),
-      Math.max(0, Math.round(Number(b.carryoverStockSlots ?? 0))),
+      safeInt(b.sharePricePence ?? 0, 0, 0),
+      safeInt(b.aldiPricePence ?? 0, 0, 0),
+      cleanText(b.aldiUnitLabel, 120) || 'Supermarket equiv.',
+      safeInt(b.wholesaleCaseCostPence ?? 0, 0, 0),
+      cleanText(b.eanBarcode, 32),
+      cleanText(b.supplierSku, 64),
+      cleanText(b.supplierName, 80) || 'Qogita / Booker UK',
+      safeInt(b.shelfLifeWeeks ?? 26, 26, 1, 260),
+      safeInt(b.carryoverStockSlots ?? 0, 0, 0, 5_000),
       b.isActive === false ? 0 : 1,
       Number(sortRow.next_sort),
       new Date().toISOString()
@@ -449,27 +584,27 @@ export function createApp(db: DatabaseSync): express.Express {
           shelf_life_weeks = ?, carryover_stock_slots = ?, is_active = ?
       WHERE id = ?
     `).run(
-      p.name !== undefined ? String(p.name).trim() : String(ex.name),
-      p.brand !== undefined ? String(p.brand).trim() : String(ex.brand),
-      p.category !== undefined ? String(p.category).trim() : String(ex.category),
-      p.imageEmoji !== undefined ? String(p.imageEmoji) : String(ex.image_emoji),
-      p.unitDescription !== undefined ? String(p.unitDescription).trim() : String(ex.unit_description),
-      p.caseDescription !== undefined ? String(p.caseDescription).trim() : String(ex.case_description),
-      p.caseSize !== undefined ? Math.max(1, Math.round(Number(p.caseSize))) : Number(ex.case_size),
-      p.sharePricePence !== undefined ? Math.max(0, Math.round(Number(p.sharePricePence))) : Number(ex.share_price_pence),
-      p.aldiPricePence !== undefined ? Math.max(0, Math.round(Number(p.aldiPricePence))) : Number(ex.aldi_price_pence),
-      p.aldiUnitLabel !== undefined ? String(p.aldiUnitLabel).trim() : String(ex.aldi_unit_label),
+      p.name !== undefined ? cleanText(p.name, 140) || String(ex.name) : String(ex.name),
+      p.brand !== undefined ? cleanText(p.brand, 100) || String(ex.brand) : String(ex.brand),
+      p.category !== undefined ? cleanText(p.category, 60) || String(ex.category) : String(ex.category),
+      p.imageEmoji !== undefined ? cleanText(p.imageEmoji, 16) || String(ex.image_emoji) : String(ex.image_emoji),
+      p.unitDescription !== undefined ? cleanText(p.unitDescription, 140) : String(ex.unit_description),
+      p.caseDescription !== undefined ? cleanText(p.caseDescription, 160) : String(ex.case_description),
+      p.caseSize !== undefined ? safeInt(p.caseSize, Number(ex.case_size), 1, 500) : Number(ex.case_size),
+      p.sharePricePence !== undefined ? safeInt(p.sharePricePence, Number(ex.share_price_pence), 0) : Number(ex.share_price_pence),
+      p.aldiPricePence !== undefined ? safeInt(p.aldiPricePence, Number(ex.aldi_price_pence), 0) : Number(ex.aldi_price_pence),
+      p.aldiUnitLabel !== undefined ? cleanText(p.aldiUnitLabel, 120) : String(ex.aldi_unit_label),
       p.wholesaleCaseCostPence !== undefined
-        ? Math.max(0, Math.round(Number(p.wholesaleCaseCostPence)))
+        ? safeInt(p.wholesaleCaseCostPence, Number(ex.wholesale_case_cost_pence), 0)
         : Number(ex.wholesale_case_cost_pence),
-      p.eanBarcode !== undefined ? String(p.eanBarcode).trim() : String(ex.ean_barcode || ''),
-      p.supplierSku !== undefined ? String(p.supplierSku).trim() : String(ex.supplier_sku || ''),
-      p.supplierName !== undefined ? String(p.supplierName).trim() : String(ex.supplier_name || 'Qogita / Booker UK'),
+      p.eanBarcode !== undefined ? cleanText(p.eanBarcode, 32) : String(ex.ean_barcode || ''),
+      p.supplierSku !== undefined ? cleanText(p.supplierSku, 64) : String(ex.supplier_sku || ''),
+      p.supplierName !== undefined ? cleanText(p.supplierName, 80) : String(ex.supplier_name || 'Qogita / Booker UK'),
       p.shelfLifeWeeks !== undefined
-        ? Math.max(1, Math.round(Number(p.shelfLifeWeeks)))
+        ? safeInt(p.shelfLifeWeeks, Number(ex.shelf_life_weeks || 26), 1, 260)
         : Number(ex.shelf_life_weeks || 26),
       p.carryoverStockSlots !== undefined
-        ? Math.max(0, Math.round(Number(p.carryoverStockSlots)))
+        ? safeInt(p.carryoverStockSlots, Number(ex.carryover_stock_slots || 0), 0, 5_000)
         : Number(ex.carryover_stock_slots || 0),
       p.isActive !== undefined ? (p.isActive ? 1 : 0) : Number(ex.is_active),
       id
@@ -502,7 +637,7 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json({ ok: true });
   });
 
-  app.post('/api/admin/scan/verify', (req, res) => {
+  app.post('/api/admin/scan/verify', limitScanVerify, (req, res) => {
     requireAdmin(req);
     const { input } = (req.body ?? {}) as { input?: string };
     res.json(verifyScanInput(db, String(input ?? '')));
@@ -521,6 +656,11 @@ export function createApp(db: DatabaseSync): express.Express {
     res.status(404).json({ error: 'API endpoint not found.' });
   });
 
+  const publicDir = path.resolve(process.cwd(), 'public');
+  if (fs.existsSync(publicDir)) {
+    app.use(express.static(publicDir));
+  }
+
   const distDir = path.resolve(process.cwd(), 'dist');
   const indexHtmlPath = path.join(distDir, 'index.html');
   if (fs.existsSync(indexHtmlPath)) {
@@ -535,8 +675,29 @@ export function createApp(db: DatabaseSync): express.Express {
   }
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err instanceof HttpError ? err.status : 500;
-    const message = err instanceof Error ? err.message : 'Unexpected server error.';
+    const bodyParserStatus =
+      typeof (err as { status?: unknown })?.status === 'number'
+        ? Number((err as { status: number }).status)
+        : undefined;
+    const status =
+      err instanceof HttpError
+        ? err.status
+        : bodyParserStatus && bodyParserStatus >= 400 && bodyParserStatus < 600
+          ? bodyParserStatus
+          : 500;
+    const message =
+      err instanceof HttpError
+        ? err.message
+        : status === 413
+          ? 'Request payload exceeds 64kb limit.'
+          : status === 400
+            ? 'Malformed JSON request body.'
+            : process.env.NODE_ENV === 'production'
+              ? 'Unexpected server error.'
+              : err instanceof Error
+                ? err.message
+                : 'Unexpected server error.';
+
     if (status >= 500 && !process.env.DIVLY_QUIET_LOGS) {
       console.error('[Divly Server Error]', err);
     }
@@ -551,6 +712,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === currentFile) {
   if (fs.existsSync('.env') && typeof process.loadEnvFile === 'function') {
     process.loadEnvFile('.env');
   }
+  warnIfInsecureProductionSecrets();
   const port = Number(process.env.PORT) || (process.env.NODE_ENV === 'production' ? 3000 : 3001);
   const db = openDatabase();
   seedDatabase(db);
