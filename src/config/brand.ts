@@ -8,7 +8,7 @@
 export const BRAND_NAME = 'Divly';
 
 export const BRAND_TAGLINE =
-  'Bulk prices with other UoB students — cheaper than Aldi.';
+  'Bulk prices with other UoB students — lower than UK supermarket prices.';
 
 export const CAMPUS_NAME = 'University of Birmingham';
 

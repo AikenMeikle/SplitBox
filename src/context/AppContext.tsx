@@ -3,11 +3,14 @@
  *
  * What this file manages:
  * 1. Live drop settings & bulk pool counts (`GET /api/state`)
- * 2. Student / Admin authentication (`GET /api/auth/me`, token login, logout)
+ * 2. Student / Admin authentication + wallet credits (`GET /api/auth/me`)
  * 3. Student's active & past orders (`GET /api/orders/mine`)
  * 4. Shopping basket persisted in `localStorage['divly_basket']`
- * 5. Live SSE stream (`/api/events`) so pool bars update automatically across tabs
- * 6. Stripe Checkout return verification (`?checkout=success&session_id=...`)
+ * 5. Referral code capture (`?ref=UOB-...` -> `localStorage['divly_ref_code']`)
+ *    and deep-linked product pool highlight (`?product=<id>`)
+ * 6. Live SSE stream (`/api/events`) for `pool_updated`, `drop_updated`,
+ *    `products_updated`, and `requests_updated`
+ * 7. Stripe Checkout return verification (`?checkout=success&session_id=...`)
  */
 
 import {
@@ -26,12 +29,23 @@ import { apiFetch, getAuthToken, setAuthToken } from '../lib/api';
 export type ActiveTab = 'shop' | 'orders' | 'admin';
 
 const BASKET_STORAGE_KEY = 'divly_basket';
+export const REFERRAL_STORAGE_KEY = 'divly_ref_code';
 
 interface StateResponse {
   settings: DropSettings;
   products: ProductWithPool[];
   stripeConfigured: boolean;
   devMode: boolean;
+}
+
+/** Read any captured `?ref=UOB-...` referral code from localStorage. */
+export function getStoredReferralCode(): string | null {
+  try {
+    const raw = window.localStorage.getItem(REFERRAL_STORAGE_KEY);
+    return raw ? raw.trim().toUpperCase() : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface AppContextValue {
@@ -57,6 +71,9 @@ export interface AppContextValue {
   refreshOrders: () => Promise<void>;
   loginWithToken: (token: string, user: AuthUser) => void;
   logout: () => Promise<void>;
+  pendingReferralCode: string | null;
+  highlightedProductId: string | null;
+  clearHighlightedProduct: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -95,6 +112,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isBasketOpen, setIsBasketOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [basket, setBasket] = useState<Record<string, number>>(loadSavedBasket);
+  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(
+    getStoredReferralCode
+  );
+  const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
 
   // Ref lets SSE listener check login state without re-opening the EventSource
   const userRef = useRef<AuthUser | null>(null);
@@ -145,6 +166,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setBasket({});
   }, []);
 
+  const clearHighlightedProduct = useCallback(() => {
+    setHighlightedProductId(null);
+  }, []);
+
   const refreshState = useCallback(async () => {
     const data = await apiFetch<StateResponse>('/api/state');
     setSettings(data.settings);
@@ -159,24 +184,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const data = await apiFetch<{ orders: Order[] }>('/api/orders/mine');
-      setOrders(data.orders);
+      const [ordersRes, meRes] = await Promise.all([
+        apiFetch<{ orders: Order[] }>('/api/orders/mine'),
+        apiFetch<{ user: AuthUser | null }>('/api/auth/me').catch(() => ({ user: null })),
+      ]);
+      setOrders(ordersRes.orders);
+      if (meRes.user) {
+        setUser(meRes.user);
+      }
     } catch {
       setOrders([]);
     }
   }, []);
 
-  const loginWithToken = useCallback(
-    (token: string, nextUser: AuthUser) => {
-      setAuthToken(token);
-      setUser(nextUser);
-      setIsAuthModalOpen(false);
-      void apiFetch<{ orders: Order[] }>('/api/orders/mine')
-        .then((res) => setOrders(res.orders))
-        .catch(() => setOrders([]));
-    },
-    []
-  );
+  const loginWithToken = useCallback((token: string, nextUser: AuthUser) => {
+    setAuthToken(token);
+    setUser(nextUser);
+    setIsAuthModalOpen(false);
+    void apiFetch<{ orders: Order[] }>('/api/orders/mine')
+      .then((res) => setOrders(res.orders))
+      .catch(() => setOrders([]));
+  }, []);
 
   const logout = useCallback(async () => {
     try {
@@ -204,12 +232,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('divly:unauthorized', handleUnauthorized);
   }, []);
 
-  // Initial load + Stripe Checkout redirect verification (`?checkout=success&session_id=...`)
+  // Initial load + URL query params (`?ref=`, `?product=`, `?checkout=`)
   useEffect(() => {
     let cancelled = false;
 
     async function bootstrap() {
       try {
+        const params = new URLSearchParams(window.location.search);
+        const refParam = params.get('ref')?.trim().toUpperCase();
+        const productParam = params.get('product')?.trim();
+        const checkoutStatus = params.get('checkout');
+        const sessionId = params.get('session_id');
+
+        if (refParam && /^[A-Z0-9-]{4,24}$/.test(refParam)) {
+          try {
+            window.localStorage.setItem(REFERRAL_STORAGE_KEY, refParam);
+          } catch {
+            // Ignore private-browsing storage errors
+          }
+          setPendingReferralCode(refParam);
+        }
+
+        if (productParam) {
+          setHighlightedProductId(productParam);
+          setActiveTab('shop');
+        }
+
         await refreshState();
 
         if (getAuthToken()) {
@@ -227,10 +275,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         // Check if returning from a live Stripe Checkout redirect
-        const params = new URLSearchParams(window.location.search);
-        const checkoutStatus = params.get('checkout');
-        const sessionId = params.get('session_id');
-
         if (checkoutStatus === 'success' && sessionId) {
           window.history.replaceState({}, '', window.location.pathname);
           await apiFetch<{ order: Order }>(
@@ -246,6 +290,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (!cancelled) {
             setIsBasketOpen(true);
           }
+        } else if (refParam || productParam) {
+          // Clean share query parameters after capturing so refreshing stays clean
+          window.history.replaceState({}, '', window.location.pathname);
         }
       } catch (err) {
         console.error('Failed to bootstrap Divly state:', err);
@@ -282,6 +329,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (userRef.current || getAuthToken()) {
             void refreshOrders();
           }
+        } else if (payload.type === 'requests_updated') {
+          window.dispatchEvent(new CustomEvent('divly:requests-updated'));
         }
       } catch {
         // Ignore heartbeat or non-JSON SSE frames
@@ -317,6 +366,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshOrders,
       loginWithToken,
       logout,
+      pendingReferralCode,
+      highlightedProductId,
+      clearHighlightedProduct,
     }),
     [
       settings,
@@ -338,6 +390,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshOrders,
       loginWithToken,
       logout,
+      pendingReferralCode,
+      highlightedProductId,
+      clearHighlightedProduct,
     ]
   );
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  Check, Clock, Copy, KeyRound, MapPin, PackageCheck,
-  QrCode, RefreshCw, ShoppingBag, Sparkles, UserCheck,
+  Check, Clock, Copy, Gift, KeyRound, MapPin, MessageCircle,
+  PackageCheck, QrCode, RefreshCw, ShoppingBag, Sparkles, UserCheck,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import {
@@ -47,7 +47,7 @@ function getAllocationBadge(
   return { label: `Pooling (${filled}/${caseSize})`, className: 'bg-sky-50 text-sky-700 border-sky-200' };
 }
 
-function getOrderSavedVsAldiPence(order: Order): number {
+function getOrderSupermarketSavingsPence(order: Order): number {
   if (order.status === 'refunded') return 0;
   return order.allocations
     .filter((a) => a.status !== 'auto_refunded')
@@ -55,7 +55,7 @@ function getOrderSavedVsAldiPence(order: Order): number {
 }
 
 /**
- * Student's live orders, transparent case-slot allocations, and HMAC QR pickup passes.
+ * Student's live orders, viral flatmate referral card, case-slot statuses, and QR pickup passes.
  */
 export function OrdersView() {
   const { user, orders, products, settings, setIsAuthModalOpen, setActiveTab, refreshOrders } = useApp();
@@ -75,11 +75,11 @@ export function OrdersView() {
     }
   }
 
-  async function handleCopyCode(orderId: string, pickupCode: string) {
+  async function handleCopyText(key: string, value: string) {
     try {
-      await navigator.clipboard.writeText(pickupCode);
-      setCopiedId(orderId);
-      setTimeout(() => setCopiedId((prev) => (prev === orderId ? null : prev)), 2000);
+      await navigator.clipboard.writeText(value);
+      setCopiedId(key);
+      setTimeout(() => setCopiedId((prev) => (prev === key ? null : prev)), 2000);
     } catch {
       // Ignore clipboard failures in restricted browser environments
     }
@@ -94,21 +94,13 @@ export function OrdersView() {
           </div>
           <h2 className="text-lg font-bold text-slate-900">Sign in to view your orders &amp; QR pickup pass</h2>
           <p className="mx-auto mt-1.5 max-w-md text-sm text-slate-600">
-            Use your <span className="font-medium text-slate-800">@student.bham.ac.uk</span> email to track live wholesale case locks, automatic refunds, and Saturday hub collection passes.
+            Use your <span className="font-medium text-slate-800">@student.bham.ac.uk</span> email to track live wholesale case locks, wallet credits, and Saturday hub passes.
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsAuthModalOpen(true)}
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
-            >
+            <button type="button" onClick={() => setIsAuthModalOpen(true)} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">
               Sign In with UoB Email
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('shop')}
-              className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-gray-50"
-            >
+            <button type="button" onClick={() => setActiveTab('shop')} className="rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-gray-50">
               Browse Bulk Pools
             </button>
           </div>
@@ -116,6 +108,11 @@ export function OrdersView() {
       </div>
     );
   }
+
+  const referralUrl = user.referralCode
+    ? `${window.location.origin}/?ref=${encodeURIComponent(user.referralCode)}`
+    : window.location.origin;
+  const whatsappInviteText = `Hey! Join me on Divly to split wholesale groceries at UoB below supermarket prices — use my link for £0.50 off your first bulk share: ${referralUrl}`;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:py-8 space-y-6">
@@ -126,14 +123,49 @@ export function OrdersView() {
             Signed in as <span className="font-medium text-slate-800">{user.email}</span> · Live case updates stream automatically.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleManualRefresh}
-          disabled={refreshing}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
-        >
+        <button type="button" onClick={handleManualRefresh} disabled={refreshing} className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50 disabled:opacity-60">
           <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
         </button>
+      </div>
+
+      {/* Viral Campus Referral & Wallet Credit Card */}
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+              <Gift className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-bold text-slate-900">🎁 Give Friends £0.50, Get £1.00 Credit</h2>
+                <span className="rounded-full border border-emerald-300 bg-white px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                  Wallet Balance: {formatPence(user.creditBalancePence ?? 0)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-600">
+                Share your code <code className="rounded bg-white px-1.5 py-0.5 font-mono font-bold text-slate-900 border border-emerald-200">{user.referralCode || 'UOB-INVITE'}</code> in your hall WhatsApp — flatmates get £0.50 immediately and help lock your open boxes faster!
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleCopyText('referral', referralUrl)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50"
+            >
+              {copiedId === 'referral' ? <><Check className="h-3.5 w-3.5 text-emerald-600" /> Invite Link Copied!</> : <><Copy className="h-3.5 w-3.5" /> Copy Invite Link</>}
+            </button>
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent(whatsappInviteText)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+            >
+              <MessageCircle className="h-3.5 w-3.5" /> Share on WhatsApp
+            </a>
+          </div>
+        </div>
       </div>
 
       {orders.length === 0 ? (
@@ -145,11 +177,7 @@ export function OrdersView() {
           <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
             Chip in on wholesale cases with other students. Locked cases are ready for Saturday pickup; unfilled slots auto-refund at cutoff.
           </p>
-          <button
-            type="button"
-            onClick={() => setActiveTab('shop')}
-            className="mt-5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
-          >
+          <button type="button" onClick={() => setActiveTab('shop')} className="mt-5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700">
             Shop Bulk Pools
           </button>
         </div>
@@ -157,8 +185,9 @@ export function OrdersView() {
         <div className="space-y-6">
           {orders.map((order) => {
             const statusMeta = getOrderStatusMeta(order.status);
-            const savedPence = getOrderSavedVsAldiPence(order);
+            const savedPence = getOrderSupermarketSavingsPence(order);
             const isRefundedOrder = order.status === 'refunded';
+            const creditUsed = order.creditAppliedPence ?? 0;
 
             return (
               <article key={order.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -178,7 +207,7 @@ export function OrdersView() {
                   </div>
                   {savedPence > 0 && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                      <Sparkles className="h-3.5 w-3.5" /> Saved {formatPence(savedPence)} vs Aldi
+                      <Sparkles className="h-3.5 w-3.5" /> Saved {formatPence(savedPence)} vs Supermarkets
                     </span>
                   )}
                 </div>
@@ -219,7 +248,7 @@ export function OrdersView() {
                                   <p className={`text-sm font-bold ${isRefundedItem ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
                                     {formatPence(alloc.sharePricePence)}
                                   </p>
-                                  <p className="text-[11px] text-slate-400">Aldi {formatPence(alloc.aldiPricePence)}</p>
+                                  <p className="text-[11px] text-slate-400">Supermarket {formatPence(alloc.aldiPricePence)}</p>
                                 </div>
                               </div>
                             </div>
@@ -231,8 +260,14 @@ export function OrdersView() {
                     <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 space-y-1.5 text-xs">
                       <div className="flex justify-between text-slate-600">
                         <span>Shares Subtotal ({formatPence(order.subtotalPence)}) + Hub Fee ({order.feePence === 0 ? '£0.00' : formatPence(order.feePence)})</span>
-                        <span className="font-medium text-slate-900">{formatPence(order.totalPaidPence)}</span>
+                        <span className="font-medium text-slate-900">{formatPence(order.subtotalPence + order.feePence)}</span>
                       </div>
+                      {creditUsed > 0 && (
+                        <div className="flex justify-between font-semibold text-emerald-700">
+                          <span>🎁 Divly Wallet Credit Applied</span>
+                          <span>-{formatPence(creditUsed)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-slate-600">
                         <span>Paid</span>
                         <span className="font-medium text-slate-900">{formatPence(order.totalPaidPence)}</span>
@@ -282,7 +317,7 @@ export function OrdersView() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleCopyCode(order.id, order.pickupCode)}
+                          onClick={() => handleCopyText(order.id, order.pickupCode)}
                           className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-gray-100"
                         >
                           {copiedId === order.id ? <><Check className="h-3.5 w-3.5 text-emerald-600" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}

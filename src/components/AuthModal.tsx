@@ -3,15 +3,15 @@
  *
  * Supports:
  * 1. UoB Student 6-digit email OTP (`@student.bham.ac.uk` / `@bham.ac.uk`),
- *    automatically showing a clickable `devOtpCode` helper box in local dev mode!
+ *    automatically passing any captured `?ref=UOB-...` referral code for a £0.50 welcome bonus!
  * 2. Founder / Admin PIN login (`POST /api/auth/admin-login`).
  * 3. Instant 1-click Dev Student / Dev Admin buttons when `devMode === true`.
  */
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { CheckCircle2, KeyRound, Mail, ShieldCheck, X, Zap } from 'lucide-react';
+import { CheckCircle2, Gift, KeyRound, Mail, ShieldCheck, X, Zap } from 'lucide-react';
 import { ALLOWED_EMAIL_DOMAINS, BRAND_NAME, CAMPUS_NAME } from '../config/brand';
-import { useApp } from '../context/AppContext';
+import { getStoredReferralCode, useApp } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
 import type { AuthUser } from '../shared/types';
 
@@ -24,6 +24,7 @@ export function AuthModal() {
     devMode,
     loginWithToken,
     setActiveTab,
+    pendingReferralCode,
   } = useApp();
 
   const [mode, setMode] = useState<AuthMode>('student');
@@ -31,6 +32,9 @@ export function AuthModal() {
   // Student OTP state
   const [studentName, setStudentName] = useState('');
   const [studentEmail, setStudentEmail] = useState('');
+  const [referralInput, setReferralInput] = useState<string>(
+    () => pendingReferralCode || getStoredReferralCode() || ''
+  );
   const [otpRequested, setOtpRequested] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [devOtpHint, setDevOtpHint] = useState<string | null>(null);
@@ -43,6 +47,14 @@ export function AuthModal() {
   // Shared UI status
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync referralInput if captured from URL query string
+  useEffect(() => {
+    const code = pendingReferralCode || getStoredReferralCode();
+    if (code) {
+      setReferralInput(code);
+    }
+  }, [pendingReferralCode, isAuthModalOpen]);
 
   // Allow Navbar's "Admin" button to pre-select the Admin tab before opening
   useEffect(() => {
@@ -68,6 +80,8 @@ export function AuthModal() {
   }, [isAuthModalOpen, setIsAuthModalOpen]);
 
   if (!isAuthModalOpen) return null;
+
+  const activeReferralCode = (referralInput.trim() || getStoredReferralCode() || '').toUpperCase();
 
   async function handleRequestOtp(e: FormEvent) {
     e.preventDefault();
@@ -113,6 +127,7 @@ export function AuthModal() {
           email: studentEmail.trim(),
           code: otpCode.trim(),
           name: studentName.trim() || undefined,
+          referralCode: activeReferralCode || undefined,
         }),
       });
       loginWithToken(res.token, res.user);
@@ -153,7 +168,10 @@ export function AuthModal() {
     try {
       const res = await apiFetch<{ token: string; user: AuthUser }>('/api/auth/dev-login', {
         method: 'POST',
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({
+          role,
+          referralCode: role === 'student' && activeReferralCode ? activeReferralCode : undefined,
+        }),
       });
       loginWithToken(res.token, res.user);
       if (role === 'admin') {
@@ -203,6 +221,17 @@ export function AuthModal() {
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Active Referral Bonus Banner */}
+        {mode === 'student' && activeReferralCode && (
+          <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-xs text-emerald-900">
+            <Gift className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Invite code <strong className="font-mono-code">{activeReferralCode}</strong> applied — new students get{' '}
+              <strong>£0.50 welcome credit</strong> automatically!
+            </span>
+          </div>
+        )}
 
         {/* Mode Switcher Tabs */}
         <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-gray-100">
@@ -281,6 +310,20 @@ export function AuthModal() {
                 </p>
               </div>
 
+              <div>
+                <label htmlFor="student-ref" className="block text-xs font-semibold text-gray-700 mb-1">
+                  Hallmate invite code (optional — gives £0.50 off)
+                </label>
+                <input
+                  id="student-ref"
+                  type="text"
+                  value={referralInput}
+                  onChange={(e) => setReferralInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. UOB-AB12CD"
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono-code uppercase focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
               <button type="submit" disabled={busy || !studentEmail.trim()} className="btn-primary w-full">
                 {busy ? 'Sending 6-digit code…' : 'Send 6-Digit Login Code'}
               </button>
@@ -334,11 +377,7 @@ export function AuthModal() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={resetStudentFlow}
-                  className="btn-secondary flex-1"
-                >
+                <button type="button" onClick={resetStudentFlow} className="btn-secondary flex-1">
                   Change Email
                 </button>
                 <button

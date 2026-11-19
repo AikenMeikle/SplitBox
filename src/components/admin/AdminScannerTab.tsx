@@ -1,10 +1,12 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import {
-  AlertOctagon, CheckCircle2, PackageCheck,
-  QrCode, Search, ShieldAlert, ShieldCheck, X,
+  AlertOctagon, Camera, CheckCircle2, PackageCheck,
+  QrCode, Search, ShieldAlert, ShieldCheck, Tag, X,
 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
 import { formatPence, type AdminSummary, type Order, type ScanLookupResult } from '../../shared/types';
+import { AdminCameraScanner } from './AdminCameraScanner';
+import { AdminPackingSlipsModal } from './AdminPackingSlipsModal';
 
 interface AdminScannerTabProps {
   summary: AdminSummary;
@@ -12,12 +14,12 @@ interface AdminScannerTabProps {
 }
 
 /**
- * Saturday Campus Hub QR / PIN Scanner & All Student Orders directory.
- * Verifies HMAC-SHA256 `DV1...` signatures, `UOB-XXXXXX` codes, 6-digit PINs, or emails,
- * lists exact fulfilled items to hand over, and blocks double-collection.
+ * Saturday Campus Hub QR / Camera / PIN Scanner, Printable Bag Labels & Student Orders directory.
  */
 export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) {
   const [scanInput, setScanInput] = useState('');
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [packingSlipsOpen, setPackingSlipsOpen] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [collecting, setCollecting] = useState(false);
   const [scanResult, setScanResult] = useState<ScanLookupResult | null>(null);
@@ -26,7 +28,7 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
   const [orderSearch, setOrderSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'collected' | 'refunded'>('all');
 
-  async function runVerify(rawValue: string) {
+  const runVerify = useCallback(async (rawValue: string) => {
     const trimmed = rawValue.trim();
     if (!trimmed) return;
     setVerifying(true);
@@ -42,7 +44,16 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
     } finally {
       setVerifying(false);
     }
-  }
+  }, []);
+
+  const handleCameraDetected = useCallback(
+    (qrValue: string) => {
+      setCameraOpen(false);
+      setScanInput(qrValue);
+      void runVerify(qrValue);
+    },
+    [runVerify],
+  );
 
   function handleSubmitVerify(e: FormEvent) {
     e.preventDefault();
@@ -90,7 +101,7 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
     <div className="space-y-6">
       {/* Hub Pickup Scanner Card */}
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
               <QrCode className="h-5 w-5" />
@@ -98,21 +109,46 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
             <div>
               <h3 className="text-sm font-bold text-slate-900">Saturday Hub Pass Scanner &amp; HMAC Verifier</h3>
               <p className="text-xs text-slate-500">
-                Scan or paste a <code className="font-mono text-slate-700">DV1…</code> QR token,{' '}
+                Scan via camera or paste a <code className="font-mono text-slate-700">DV1…</code> QR token,{' '}
                 <code className="font-mono text-slate-700">UOB-XXXXXX</code> code, 6-digit PIN, or student email.
               </p>
             </div>
           </div>
-          {scanResult && (
+
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => { setScanResult(null); setScanInput(''); setActionError(null); }}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-gray-50"
+              onClick={() => setCameraOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
             >
-              <X className="h-3.5 w-3.5" /> Clear
+              <Camera className="h-3.5 w-3.5 text-emerald-600" />
+              {cameraOpen ? 'Close Camera' : '📷 Start Camera QR Scan'}
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => setPackingSlipsOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50"
+            >
+              <Tag className="h-3.5 w-3.5 text-emerald-600" />
+              🏷️ Print Saturday Bag Labels
+            </button>
+            {scanResult && (
+              <button
+                type="button"
+                onClick={() => { setScanResult(null); setScanInput(''); setActionError(null); }}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-2 text-xs font-medium text-slate-600 hover:bg-gray-50"
+              >
+                <X className="h-3.5 w-3.5" /> Clear
+              </button>
+            )}
+          </div>
         </div>
+
+        <AdminCameraScanner
+          open={cameraOpen}
+          onDetected={handleCameraDetected}
+          onClose={() => setCameraOpen(false)}
+        />
 
         <form onSubmit={handleSubmitVerify} className="flex flex-col gap-2.5 sm:flex-row">
           <input
@@ -180,7 +216,7 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
                 Items to Hand Over ({handoverAllocations.length})
               </p>
               {handoverAllocations.length === 0 ? (
-                <p className="text-xs text-slate-500">0 fulfilled/locked shares on this order (unfilled shares were refunded or are still pooling).</p>
+                <p className="text-xs text-slate-500">0 fulfilled/locked shares on this order.</p>
               ) : (
                 <ul className="divide-y divide-gray-100 text-xs">
                   {handoverAllocations.map((a) => (
@@ -290,6 +326,12 @@ export function AdminScannerTab({ summary, onReloadAll }: AdminScannerTabProps) 
           </table>
         </div>
       </div>
+
+      <AdminPackingSlipsModal
+        open={packingSlipsOpen}
+        summary={summary}
+        onClose={() => setPackingSlipsOpen(false)}
+      />
     </div>
   );
 }

@@ -3,11 +3,12 @@
  *
  * Features:
  * - Compact 3-step student explainer hero + live campus drop banner
+ * - Deep-linked pool spotlight when a student opens a shared `?product=<id>` invite link
  * - High-converting "🔥 Almost Full — Closer Bonus + Free Pickup" spotlight strip
- *   that funnels early campus traffic into finishing the same open boxes
  * - Search bar, horizontal category filter pills, and sort selector (defaulting to
  *   `'almost_full'` — "Recommended: Almost Full & Extra Savings")
  * - Responsive 1/2/3/4-column supermarket grid of `ProductCard` tiles
+ * - Student "Suggest & Upvote Next Week's Drop" community request board
  * - Sticky mobile bottom trolley summary bar (`< 768px`) for 1-tap checkout
  */
 
@@ -17,6 +18,7 @@ import {
   Check,
   CheckCircle2,
   Flame,
+  Pin,
   Plus,
   QrCode,
   Search,
@@ -31,6 +33,7 @@ import { BRAND_TAGLINE, CAMPUS_NAME } from '../config/brand';
 import { useApp } from '../context/AppContext';
 import { formatPence } from '../shared/types';
 import { ProductCard } from './ProductCard';
+import { RequestBoardSection } from './RequestBoardSection';
 
 type SortOption = 'almost_full' | 'biggest_saving' | 'lowest_price';
 
@@ -52,6 +55,8 @@ export function StorefrontView() {
     addToBasket,
     setIsBasketOpen,
     setActiveTab,
+    highlightedProductId,
+    clearHighlightedProduct,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,6 +66,14 @@ export function StorefrontView() {
   const activeProducts = useMemo(
     () => products.filter((p) => p.isActive !== false),
     [products]
+  );
+
+  const highlightedProduct = useMemo(
+    () =>
+      highlightedProductId
+        ? activeProducts.find((p) => p.id === highlightedProductId) ?? null
+        : null,
+    [activeProducts, highlightedProductId]
   );
 
   // Top 4 almost-full pools ranked by fewest remaining spots first
@@ -88,7 +101,7 @@ export function StorefrontView() {
     return ['All', ...Array.from(dynamicSet)];
   }, [activeProducts]);
 
-  // Filter & sort products according to student search, category pill, and sort mode
+  // Filter & sort products, pinning any deep-linked `?product=<id>` pool first
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
@@ -106,11 +119,14 @@ export function StorefrontView() {
     });
 
     return [...matches].sort((a, b) => {
+      if (highlightedProductId) {
+        if (a.id === highlightedProductId) return -1;
+        if (b.id === highlightedProductId) return 1;
+      }
       if (sortBy === 'lowest_price') {
         return a.effectiveSharePricePence - b.effectiveSharePricePence;
       }
       if (sortBy === 'almost_full') {
-        // Rank `isAlmostFull` pools first, then fewest `openCaseRemainingSlots` first
         if (a.isAlmostFull !== b.isAlmostFull) {
           return a.isAlmostFull ? -1 : 1;
         }
@@ -120,15 +136,14 @@ export function StorefrontView() {
         if (b.fillRatio !== a.fillRatio) return b.fillRatio - a.fillRatio;
         return b.lockedCasesCount - a.lockedCasesCount;
       }
-      // Biggest Saving vs Aldi
+      // Biggest Supermarket Saving
       if (b.savingsPercent !== a.savingsPercent) {
         return b.savingsPercent - a.savingsPercent;
       }
       return a.effectiveSharePricePence - b.effectiveSharePricePence;
     });
-  }, [activeProducts, searchQuery, selectedCategory, sortBy]);
+  }, [activeProducts, highlightedProductId, searchQuery, selectedCategory, sortBy]);
 
-  // Live campus-wide locked case count & basket totals for the mobile sticky bar
   const totalLockedCases = useMemo(
     () => activeProducts.reduce((sum, p) => sum + p.lockedCasesCount, 0),
     [activeProducts]
@@ -136,20 +151,20 @@ export function StorefrontView() {
 
   const basketTotals = useMemo(() => {
     let subtotalPence = 0;
-    let aldiTotalPence = 0;
+    let supermarketTotalPence = 0;
     let waivesFee = false;
     for (const [productId, qty] of Object.entries(basket)) {
       if (qty <= 0) continue;
       const item = products.find((p) => p.id === productId);
       if (item) {
         subtotalPence += item.effectiveSharePricePence * qty;
-        aldiTotalPence += item.aldiPricePence * qty;
+        supermarketTotalPence += item.aldiPricePence * qty;
         if (item.waivesSmallOrderFee) waivesFee = true;
       }
     }
     return {
       subtotalPence,
-      savedVsAldiPence: Math.max(0, aldiTotalPence - subtotalPence),
+      savedVsRetailPence: Math.max(0, supermarketTotalPence - subtotalPence),
       waivesFee,
     };
   }, [basket, products]);
@@ -179,6 +194,29 @@ export function StorefrontView() {
           >
             <span>View Pickup Pass &amp; Refunds</span>
             <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Pinned Shared Pool Banner when arriving from `?product=<id>` */}
+      {highlightedProduct && (
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-wrap items-center justify-between gap-2.5 text-xs sm:text-sm text-emerald-950">
+          <div className="flex items-center gap-2">
+            <Pin className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Shared pool pinned below:{' '}
+              <strong>
+                {highlightedProduct.brand} {highlightedProduct.name}
+              </strong>{' '}
+              ({highlightedProduct.openCaseClaimedSlots} of {highlightedProduct.caseSize} chipped in)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={clearHighlightedProduct}
+            className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 cursor-pointer"
+          >
+            Dismiss pin
           </button>
         </div>
       )}
@@ -224,7 +262,7 @@ export function StorefrontView() {
                 <span>Chip in on bulk cases</span>
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
-                Claim student-sized shares anonymously with other UoB students — zero flat-chat chasing.
+                Claim factory-sealed shares anonymously with other UoB students — zero flat-chat chasing.
               </p>
             </div>
           </div>
@@ -236,10 +274,10 @@ export function StorefrontView() {
             <div>
               <p className="font-bold text-gray-900 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Beat Aldi shelf prices</span>
+                <span>Beat UK supermarket prices</span>
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
-                Wholesale cases unlock 15–35% lower unit prices than Aldi, plus extra Closer Bonuses.
+                Wholesale cases unlock 15–35% lower unit prices than typical supermarkets, plus Closer Bonuses.
               </p>
             </div>
           </div>
@@ -402,7 +440,7 @@ export function StorefrontView() {
               className="flex-1 sm:flex-none px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs sm:text-sm font-semibold text-gray-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
               <option value="almost_full">Recommended: Almost Full &amp; Extra Savings</option>
-              <option value="biggest_saving">Biggest Saving vs Aldi</option>
+              <option value="biggest_saving">Biggest Supermarket Saving</option>
               <option value="lowest_price">Lowest Price</option>
             </select>
           </div>
@@ -483,10 +521,18 @@ export function StorefrontView() {
           aria-label="Bulk grocery products"
         >
           {filteredProducts.map((product) => (
-            <ProductCard key={product.id} product={product} dropClosed={dropClosed} />
+            <ProductCard
+              key={product.id}
+              product={product}
+              dropClosed={dropClosed}
+              isHighlighted={product.id === highlightedProductId}
+            />
           ))}
         </section>
       )}
+
+      {/* Student Request & Upvote Community Board */}
+      <RequestBoardSection />
 
       {/* Sticky Mobile Bottom Trolley Bar (visible at 375px / < 768px whenever items are in trolley) */}
       {basketCount > 0 && (
@@ -505,9 +551,9 @@ export function StorefrontView() {
                 <span className="font-bold">
                   {basketCount} {basketCount === 1 ? 'share' : 'shares'}
                 </span>
-                {basketTotals.savedVsAldiPence > 0 && (
+                {basketTotals.savedVsRetailPence > 0 && (
                   <span className="ml-1.5 text-xs text-emerald-100 font-medium">
-                    (Save {formatPence(basketTotals.savedVsAldiPence)}
+                    (Save {formatPence(basketTotals.savedVsRetailPence)}
                     {basketTotals.waivesFee ? ' · £0 Fee' : ''})
                   </span>
                 )}

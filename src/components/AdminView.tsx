@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ClipboardList,
+  DatabaseBackup,
   Package,
   QrCode,
   RefreshCw,
@@ -17,9 +18,9 @@ type AdminSubTab = 'wholesale' | 'products' | 'scanner';
 
 /**
  * Founder & Hub Coordinator dashboard combining:
- * 1. Wholesale 100%-locked shopping list, weekly cutoff, new drop cycle & hub settings
- * 2. No-code Product & Aldi price comparison manager
- * 3. Saturday Hub HMAC QR/PIN pass scanner & all student orders directory
+ * 1. Wholesale shopping list, Bayesian Buy-Ahead predictor, Supplier POs & Hub settings
+ * 2. No-code Product / Barcode manager & Student Item Requests triage
+ * 3. Saturday Hub Camera QR / PIN scanner, Printable Bag Labels & JSON DB Backup
  */
 export function AdminView() {
   const { user, setIsAuthModalOpen, refreshState, refreshOrders, products, settings } = useApp();
@@ -27,6 +28,7 @@ export function AdminView() {
   const [subTab, setSubTab] = useState<AdminSubTab>('wholesale');
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
@@ -45,7 +47,6 @@ export function AdminView() {
     }
   }, [isAdmin]);
 
-  // Reload summary on initial mount AND whenever global SSE state changes
   useEffect(() => {
     if (isAdmin) {
       void loadSummary();
@@ -58,6 +59,27 @@ export function AdminView() {
     await Promise.all([loadSummary(), refreshState(), refreshOrders()]);
   }, [loadSummary, refreshState, refreshOrders]);
 
+  async function handleDownloadBackup() {
+    setDownloadingBackup(true);
+    setErrorMsg(null);
+    try {
+      const backupPayload = await apiFetch<Record<string, unknown>>('/api/admin/backup');
+      const json = JSON.stringify(backupPayload, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `divly-backup-${dateStamp}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to export JSON backup.');
+    } finally {
+      setDownloadingBackup(false);
+    }
+  }
+
   if (!isAdmin) {
     return (
       <div className="mx-auto max-w-xl px-4 py-12">
@@ -67,13 +89,13 @@ export function AdminView() {
           </div>
           <h2 className="text-lg font-bold text-slate-900">Founder &amp; Hub Coordinator Access</h2>
           <p className="mx-auto mt-1.5 max-w-md text-sm text-slate-600">
-            Sign in with your Admin PIN to manage wholesale case manifests, weekly cutoffs, Aldi
-            product prices, and Saturday hub QR pass verification.
+            Sign in with your Admin PIN to manage wholesale case manifests, weekly cutoffs, catalog
+            pricing, database backups, and Saturday hub QR pass verification.
           </p>
           <button
             type="button"
             onClick={() => setIsAuthModalOpen(true)}
-            className="mt-6 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors"
+            className="mt-6 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
           >
             Sign In as Admin
           </button>
@@ -84,8 +106,7 @@ export function AdminView() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:py-8 space-y-6">
-      {/* Header & Sub-Navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 print:hidden">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">
@@ -109,23 +130,34 @@ export function AdminView() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => void handleReloadAll()}
-          disabled={loadingSummary}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50 disabled:opacity-60 transition-colors"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loadingSummary ? 'animate-spin' : ''}`} />
-          Refresh Data
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleDownloadBackup}
+            disabled={downloadingBackup}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
+          >
+            <DatabaseBackup className="h-3.5 w-3.5 text-emerald-600" />
+            {downloadingBackup ? 'Exporting…' : '💾 Download DB Backup'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleReloadAll()}
+            disabled={loadingSummary}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-gray-50 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loadingSummary ? 'animate-spin' : ''}`} />
+            Refresh Data
+          </button>
+        </div>
       </div>
 
       {/* Sub-Tab Selector */}
-      <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
+      <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm print:hidden">
         <button
           type="button"
           onClick={() => setSubTab('wholesale')}
-          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold transition-colors ${
+          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold ${
             subTab === 'wholesale'
               ? 'bg-emerald-600 text-white shadow-sm'
               : 'text-slate-600 hover:bg-gray-50 hover:text-slate-900'
@@ -137,31 +169,31 @@ export function AdminView() {
         <button
           type="button"
           onClick={() => setSubTab('products')}
-          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold transition-colors ${
+          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold ${
             subTab === 'products'
               ? 'bg-emerald-600 text-white shadow-sm'
               : 'text-slate-600 hover:bg-gray-50 hover:text-slate-900'
           }`}
         >
           <Package className="h-4 w-4" />
-          Products &amp; Aldi Prices ({summary?.products.length ?? 0})
+          Products &amp; Requests ({summary?.products.length ?? 0})
         </button>
         <button
           type="button"
           onClick={() => setSubTab('scanner')}
-          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold transition-colors ${
+          className={`flex flex-1 min-w-[180px] items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold ${
             subTab === 'scanner'
               ? 'bg-emerald-600 text-white shadow-sm'
               : 'text-slate-600 hover:bg-gray-50 hover:text-slate-900'
           }`}
         >
           <QrCode className="h-4 w-4" />
-          Hub Scanner &amp; Orders ({summary?.orders.length ?? 0})
+          Hub Scanner &amp; Labels ({summary?.orders.length ?? 0})
         </button>
       </div>
 
       {errorMsg && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-medium text-red-700 print:hidden">
           {errorMsg}
         </div>
       )}

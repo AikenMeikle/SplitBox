@@ -2,12 +2,12 @@
  * Clean supermarket product card for Divly bulk pools.
  *
  * Displays:
- * - Emoji visual badge, category & bold green "Save X% vs Aldi" pill
+ * - Emoji visual badge, category & bold green "Save X% vs Supermarkets" pill
  * - Closer Incentive pill ("⚡ CLOSER BONUS: -X% + FREE PICKUP") on almost-full boxes
  * - Instant hub carryover badge ("✓ Instant Stock Held at Hub") when rollover units exist
- * - Prominent effective bulk share price vs base share price & Aldi shelf price
+ * - Prominent effective bulk share price vs base share price & typical UK supermarket price
  * - Clean horizontal segmented slot bar ("Only X spot(s) left to lock Case #Y!")
- * - Quick WhatsApp / copy-link button + "+ Chip In" / "- qty +" quantity stepper
+ * - Viral WhatsApp / copy-link button (`?product=<id>&ref=<code>`) + quantity stepper
  */
 
 import { useState } from 'react';
@@ -19,10 +19,11 @@ import { formatPence, type ProductWithPool } from '../shared/types';
 interface ProductCardProps {
   product: ProductWithPool;
   dropClosed: boolean;
+  isHighlighted?: boolean;
 }
 
-export function ProductCard({ product, dropClosed }: ProductCardProps) {
-  const { basket, addToBasket } = useApp();
+export function ProductCard({ product, dropClosed, isHighlighted = false }: ProductCardProps) {
+  const { user, basket, addToBasket } = useApp();
   const [copied, setCopied] = useState(false);
 
   const qtyInBasket = basket[product.id] ?? 0;
@@ -34,7 +35,7 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
     : product.sharePricePence;
   const carryoverSlots = product.carryoverStockSlots ?? 0;
 
-  // Total % saved vs Aldi including any active Closer Bonus
+  // Total % saved vs UK supermarkets including any active Closer Bonus
   const effectiveSavingsPercent =
     product.aldiPricePence > 0
       ? Math.max(
@@ -43,18 +44,28 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
         )
       : product.savingsPercent;
 
-  // Build friendly WhatsApp / clipboard invite message so hallmates can lock the box
+  const retailUnitLabel = product.aldiUnitLabel || 'Supermarket equiv.';
+
+  // Build viral WhatsApp / clipboard invite link with `?product=<id>&ref=<code>`
   async function handleShareInvite() {
-    const spotsNeeded = remainingInOpen;
-    const url = window.location.origin;
-    const text =
-      spotsNeeded > 0 && claimedInOpen > 0
-        ? `Only ${spotsNeeded} ${spotsNeeded === 1 ? 'spot' : 'spots'} left to lock ${product.brand} ${product.name} (${product.unitDescription}) at ${formatPence(displayPricePence)} vs Aldi ${formatPence(product.aldiPricePence)} on ${BRAND_NAME}! ${url}`
-        : `Split a bulk case of ${product.brand} ${product.name} (${product.unitDescription}) for ${formatPence(displayPricePence)} (Save ${effectiveSavingsPercent}% vs Aldi) on ${BRAND_NAME}: ${url}`;
+    const params = new URLSearchParams({ product: product.id });
+    if (user?.referralCode) {
+      params.set('ref', user.referralCode);
+    }
+    const shareUrl = `${window.location.origin}/?${params.toString()}`;
+
+    const spotsLead =
+      remainingInOpen > 0 && claimedInOpen > 0
+        ? `${remainingInOpen} ${remainingInOpen === 1 ? 'spot' : 'spots'} left`
+        : `${formatPence(displayPricePence)} per share (Save ${effectiveSavingsPercent}% vs Supermarkets)`;
+
+    const text = user?.referralCode
+      ? `Join my UoB bulk box on ${BRAND_NAME} (${product.brand} ${product.name}) — ${spotsLead} + get £0.50 off your first drop! ${shareUrl}`
+      : `Join this UoB bulk box on ${BRAND_NAME} (${product.brand} ${product.name}, ${product.unitDescription}) — ${spotsLead}: ${shareUrl}`;
 
     try {
       if (navigator.share) {
-        await navigator.share({ title: `${BRAND_NAME} Bulk Pool`, text, url });
+        await navigator.share({ title: `${BRAND_NAME} UoB Bulk Box`, text, url: shareUrl });
         return;
       }
     } catch {
@@ -73,9 +84,11 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
   return (
     <article
       className={`card p-4 flex flex-col justify-between gap-3.5 transition-colors ${
-        hasCloserBonus
-          ? 'border-emerald-300 ring-1 ring-emerald-500/15 hover:border-emerald-400'
-          : 'hover:border-gray-300'
+        isHighlighted
+          ? 'border-emerald-500 ring-2 ring-emerald-500/25 bg-emerald-50/20'
+          : hasCloserBonus
+            ? 'border-emerald-300 ring-1 ring-emerald-500/15 hover:border-emerald-400'
+            : 'hover:border-gray-300'
       }`}
     >
       {/* Top Section: Visual Tile, Savings Pill, Closer Bonus & Share Button */}
@@ -99,13 +112,17 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
           <div className="flex items-center gap-1.5 shrink-0">
             {effectiveSavingsPercent > 0 && (
               <span className="badge-green tabular-nums">
-                Save {effectiveSavingsPercent}% vs Aldi
+                Save {effectiveSavingsPercent}% vs RRP
               </span>
             )}
             <button
               type="button"
               onClick={() => void handleShareInvite()}
-              title="Copy WhatsApp / hallmate invite link"
+              title={
+                user?.referralCode
+                  ? 'Share pool link (+ Give £0.50, Get £1 credit)'
+                  : 'Copy WhatsApp / hallmate invite link'
+              }
               aria-label={`Invite hallmates to ${product.name}`}
               className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:text-emerald-700 hover:border-emerald-200 hover:bg-emerald-50/50 cursor-pointer transition-colors"
             >
@@ -148,7 +165,7 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
         </p>
       </div>
 
-      {/* Middle Section: Price Comparison vs Aldi + Horizontal Segmented Pool Bar */}
+      {/* Middle Section: Price Comparison vs Supermarkets + Horizontal Segmented Pool Bar */}
       <div className="space-y-3 pt-1">
         {/* Supermarket Shelf Price Tag */}
         <div className="flex items-baseline justify-between gap-2 pt-2.5 border-t border-gray-100">
@@ -171,13 +188,13 @@ export function ProductCard({ product, dropClosed }: ProductCardProps) {
               )}
               <span
                 className="text-xs font-medium text-gray-400 line-through"
-                title="Aldi supermarket comparison price"
+                title="Typical UK supermarket comparison price"
               >
-                Aldi {formatPence(product.aldiPricePence)}
+                Typical {formatPence(product.aldiPricePence)}
               </span>
             </div>
-            <p className="text-[11px] text-gray-500 truncate" title={product.aldiUnitLabel}>
-              Aldi benchmark: {product.aldiUnitLabel}
+            <p className="text-[11px] text-gray-500 truncate" title={retailUnitLabel}>
+              Supermarket equiv: {retailUnitLabel}
             </p>
           </div>
 

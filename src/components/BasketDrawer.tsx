@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft, CheckCircle2, CreditCard, Lock, Minus, Plus,
+  ArrowLeft, CheckCircle2, CreditCard, Gift, Lock, Minus, Plus,
   ShieldCheck, ShoppingBag, Sparkles, Trash2, X, Zap,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { apiFetch } from '../lib/api';
+import { apiFetch, getAuthToken } from '../lib/api';
 import {
   formatPence,
+  type AuthUser,
   type CreateCheckoutRequest,
   type CreateCheckoutResponse,
   type Order,
@@ -49,12 +50,13 @@ function getAllocationPreview(
 
 /**
  * Slide-over right trolley drawer with Almost-Full Closer Bonus fee waivers,
- * 1-tap cold-start upsell card, live case-lock previews, and Stripe checkout.
+ * automatic Divly referral wallet credits, 1-tap upsell, and Stripe checkout.
  */
 export function BasketDrawer() {
   const {
     settings, products, user, isBasketOpen, setIsBasketOpen, setIsAuthModalOpen,
-    setActiveTab, basket, addToBasket, setBasketQty, clearBasket, refreshState, refreshOrders,
+    setActiveTab, basket, addToBasket, setBasketQty, clearBasket,
+    refreshState, refreshOrders, loginWithToken,
   } = useApp();
 
   const [creatingCheckout, setCreatingCheckout] = useState(false);
@@ -91,7 +93,6 @@ export function BasketDrawer() {
   const hasAlmostFullItem = basketLines.some(({ product }) => Boolean(product.isAlmostFull));
   const feeWaivedByCloser = basketLines.some(({ product }) => Boolean(product.waivesSmallOrderFee));
 
-  // #1 almost-full candidate for 1-tap cold-start fee-waiver upsell
   const topAlmostFullUpsell = useMemo(() => {
     if (basketLines.length === 0 || hasAlmostFullItem) return null;
     const candidates = products.filter((p) => p.isActive && p.isAlmostFull && !(basket[p.id] > 0));
@@ -120,11 +121,14 @@ export function BasketDrawer() {
     (m, { product }) => (product.isAlmostFull ? Math.max(m, product.closerDiscountPercent || 0) : m),
     0,
   );
-  const aldiTotalPence = basketLines.reduce((s, { product, qty }) => s + product.aldiPricePence * qty, 0);
-  const savedVsAldiPence = Math.max(0, aldiTotalPence - subtotalPence);
+  const supermarketTotalPence = basketLines.reduce((s, { product, qty }) => s + product.aldiPricePence * qty, 0);
+  const savedVsSupermarketsPence = Math.max(0, supermarketTotalPence - subtotalPence);
   const feePence =
     subtotalPence === 0 || subtotalPence >= thresholdPence || feeWaivedByCloser ? 0 : smallOrderFeePence;
-  const totalToPayPence = subtotalPence + feePence;
+  const grossOrderPence = subtotalPence + feePence;
+  const walletBalancePence = Math.max(0, user?.creditBalancePence ?? 0);
+  const creditAppliedPence = Math.min(walletBalancePence, grossOrderPence);
+  const totalToPayPence = Math.max(0, grossOrderPence - creditAppliedPence);
   const remainingForFreeFeePence = feeWaivedByCloser ? 0 : Math.max(0, thresholdPence - subtotalPence);
   const progressPercent =
     feeWaivedByCloser || thresholdPence <= 0
@@ -169,12 +173,17 @@ export function BasketDrawer() {
         body: JSON.stringify({ pendingOrderId: pendingCheckout.pendingOrderId }),
       });
       clearBasket();
+      const token = getAuthToken();
+      if (token) {
+        const me = await apiFetch<{ user: AuthUser | null }>('/api/auth/me').catch(() => ({ user: null }));
+        if (me.user) loginWithToken(token, me.user);
+      }
       await Promise.all([refreshState(), refreshOrders()]);
       setPendingCheckout(null);
       setIsBasketOpen(false);
       setActiveTab('orders');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Test payment confirmation failed.');
+      setErrorMsg(err instanceof Error ? err.message : 'Payment confirmation failed.');
     } finally {
       setConfirmingMethod(null);
     }
@@ -182,18 +191,9 @@ export function BasketDrawer() {
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
-      <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px]"
-        onClick={() => !confirmingMethod && setIsBasketOpen(false)}
-        aria-hidden="true"
-      />
+      <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px]" onClick={() => !confirmingMethod && setIsBasketOpen(false)} aria-hidden="true" />
 
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="basket-drawer-title"
-        className="relative z-10 flex h-full w-full max-w-md flex-col bg-white shadow-2xl border-l border-gray-200"
-      >
+      <div role="dialog" aria-modal="true" aria-labelledby="basket-drawer-title" className="relative z-10 flex h-full w-full max-w-md flex-col bg-white shadow-2xl border-l border-gray-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
           <div className="flex items-center gap-2.5">
@@ -202,19 +202,14 @@ export function BasketDrawer() {
             </div>
             <div>
               <h2 id="basket-drawer-title" className="text-base font-semibold text-slate-900">
-                {pendingCheckout ? 'Complete Test Payment' : 'Your Bulk Trolley'}
+                {pendingCheckout ? 'Complete Checkout' : 'Your Bulk Trolley'}
               </h2>
               <p className="text-xs text-slate-500">
                 {settings?.hubShortLabel || 'UoB Campus Hub'} · {settings?.pickupWindow || 'Sat Pickup'}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => !confirmingMethod && setIsBasketOpen(false)}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-gray-100 hover:text-slate-600"
-            aria-label="Close trolley"
-          >
+          <button type="button" onClick={() => !confirmingMethod && setIsBasketOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-gray-100 hover:text-slate-600" aria-label="Close trolley">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -225,18 +220,15 @@ export function BasketDrawer() {
             <div className="flex items-center justify-between text-xs font-medium mb-1.5">
               {feeWaivedByCloser && subtotalPence < thresholdPence ? (
                 <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <Zap className="h-4 w-4 text-amber-500" />
-                  £0.00 fee unlocked via Closer Bonus! ⚡
+                  <Zap className="h-4 w-4 text-amber-500" /> £0.00 fee unlocked via Closer Bonus! ⚡
                 </span>
               ) : remainingForFreeFeePence === 0 ? (
                 <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  Unlocked £0.00 campus hub pickup!
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" /> Unlocked £0.00 campus hub pickup!
                 </span>
               ) : (
                 <span className="text-slate-700">
-                  Add <strong className="text-emerald-700">{formatPence(remainingForFreeFeePence)}</strong> more for{' '}
-                  <strong className="text-emerald-700">£0.00 fee!</strong>
+                  Add <strong className="text-emerald-700">{formatPence(remainingForFreeFeePence)}</strong> more for <strong className="text-emerald-700">£0.00 fee!</strong>
                 </span>
               )}
               <span className="text-slate-500">{formatPence(subtotalPence)} / {formatPence(thresholdPence)}</span>
@@ -250,9 +242,7 @@ export function BasketDrawer() {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {errorMsg && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">
-              {errorMsg}
-            </div>
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">{errorMsg}</div>
           )}
 
           {basketLines.length === 0 ? (
@@ -262,92 +252,79 @@ export function BasketDrawer() {
               </div>
               <h3 className="text-sm font-semibold text-slate-900">Your trolley is empty</h3>
               <p className="mt-1 max-w-xs text-xs text-slate-500">
-                Chip in on wholesale grocery cases with other UoB students at prices cheaper than Aldi.
+                Chip in on wholesale grocery cases with other UoB students at prices lower than UK supermarkets.
               </p>
-              <button
-                type="button"
-                onClick={() => setIsBasketOpen(false)}
-                className="mt-4 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
-              >
+              <button type="button" onClick={() => setIsBasketOpen(false)} className="mt-4 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
                 Browse Bulk Pools
               </button>
             </div>
           ) : pendingCheckout ? (
-            /* Simulated Stripe Checkout Sheet */
             <div className="space-y-4">
-              <button
-                type="button"
-                disabled={Boolean(confirmingMethod)}
-                onClick={() => setPendingCheckout(null)}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900"
-              >
+              <button type="button" disabled={Boolean(confirmingMethod)} onClick={() => setPendingCheckout(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900">
                 <ArrowLeft className="h-3.5 w-3.5" /> Back to trolley
               </button>
 
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                 <div className="flex items-center justify-between">
                   <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800">
-                    Stripe Test Mode · No Real Charge
+                    {pendingCheckout.totalPaidPence === 0 ? 'Covered by Divly Wallet Credit' : 'Stripe Test Mode · No Real Charge'}
                   </span>
                   <Lock className="h-4 w-4 text-slate-400" />
                 </div>
                 <div className="mt-3 flex items-baseline justify-between">
                   <div>
                     <p className="text-xs text-slate-500">Paying as {user?.email}</p>
-                    <p className="text-2xl font-bold tracking-tight text-slate-900 mt-0.5">
-                      {formatPence(pendingCheckout.totalPaidPence)}
-                    </p>
+                    <p className="text-2xl font-bold tracking-tight text-slate-900 mt-0.5">{formatPence(pendingCheckout.totalPaidPence)}</p>
                   </div>
-                  {savedVsAldiPence > 0 && (
+                  {savedVsSupermarketsPence > 0 && (
                     <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 border border-emerald-200">
-                      Saving {formatPence(savedVsAldiPence)} vs Aldi
+                      Saving {formatPence(savedVsSupermarketsPence)} vs Supermarkets
                     </span>
                   )}
                 </div>
-                <p className="mt-2 text-[11px] text-slate-500">
-                  Unfilled case slots at weekly cutoff are 100% automatically refunded.
-                </p>
+                {(pendingCheckout.creditAppliedPence ?? creditAppliedPence) > 0 && (
+                  <p className="mt-1.5 text-xs font-semibold text-emerald-700">
+                    🎁 Includes {formatPence(pendingCheckout.creditAppliedPence ?? creditAppliedPence)} Divly Wallet Credit applied!
+                  </p>
+                )}
               </div>
 
-              <div className="space-y-2.5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Express Test Wallets</p>
+              {pendingCheckout.totalPaidPence === 0 ? (
                 <button
                   type="button"
                   disabled={Boolean(confirmingMethod)}
-                  onClick={() => handleConfirmTestPayment('apple_pay')}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                >
-                  {confirmingMethod === 'apple_pay' ? 'Authorising Apple Pay…' : ' Pay · Instant Test Checkout'}
-                </button>
-                <button
-                  type="button"
-                  disabled={Boolean(confirmingMethod)}
-                  onClick={() => handleConfirmTestPayment('google_pay')}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-gray-50 disabled:opacity-60"
-                >
-                  {confirmingMethod === 'google_pay' ? 'Authorising Google Pay…' : 'G Pay · Express Student Wallet'}
-                </button>
-              </div>
-
-              <div className="rounded-xl border border-gray-200 bg-white p-3.5 space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="flex items-center gap-2 font-medium text-slate-700">
-                    <CreditCard className="h-4 w-4 text-emerald-600" /> Test Visa Debit •••• 4242
-                  </span>
-                  <span className="text-slate-400">Exp 12/29 · CVC 424</span>
-                </div>
-                <button
-                  type="button"
-                  disabled={Boolean(confirmingMethod)}
-                  onClick={() => handleConfirmTestPayment('visa_4242')}
+                  onClick={() => handleConfirmTestPayment('wallet_credit')}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                 >
-                  <ShieldCheck className="h-4 w-4" />
-                  {confirmingMethod === 'visa_4242'
-                    ? 'Confirming Slots & Generating Pass…'
-                    : `Pay ${formatPence(pendingCheckout.totalPaidPence)} with Test Visa •••• 4242`}
+                  <Gift className="h-4 w-4" />
+                  {confirmingMethod ? 'Confirming Wallet Credit Order…' : 'Confirm £0.00 Order with Wallet Credit'}
                 </button>
-              </div>
+              ) : (
+                <>
+                  <div className="space-y-2.5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Express Test Wallets</p>
+                    <button type="button" disabled={Boolean(confirmingMethod)} onClick={() => handleConfirmTestPayment('apple_pay')} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
+                      {confirmingMethod === 'apple_pay' ? 'Authorising Apple Pay…' : ' Pay · Instant Test Checkout'}
+                    </button>
+                    <button type="button" disabled={Boolean(confirmingMethod)} onClick={() => handleConfirmTestPayment('google_pay')} className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-gray-50 disabled:opacity-60">
+                      {confirmingMethod === 'google_pay' ? 'Authorising Google Pay…' : 'G Pay · Express Student Wallet'}
+                    </button>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 bg-white p-3.5 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-2 font-medium text-slate-700">
+                        <CreditCard className="h-4 w-4 text-emerald-600" /> Test Visa Debit •••• 4242
+                      </span>
+                      <span className="text-slate-400">Exp 12/29 · CVC 424</span>
+                    </div>
+                    <button type="button" disabled={Boolean(confirmingMethod)} onClick={() => handleConfirmTestPayment('visa_4242')} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60">
+                      <ShieldCheck className="h-4 w-4" />
+                      {confirmingMethod === 'visa_4242' ? 'Confirming Slots…' : `Pay ${formatPence(pendingCheckout.totalPaidPence)} with Test Visa •••• 4242`}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
@@ -384,20 +361,14 @@ export function BasketDrawer() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-sm font-bold text-slate-900">{formatPence(unitPrice * qty)}</p>
-                        <p className="text-[11px] text-slate-400 line-through">Aldi {formatPence(product.aldiPricePence * qty)}</p>
+                        <p className="text-[11px] text-slate-400 line-through">Supermarket {formatPence(product.aldiPricePence * qty)}</p>
                       </div>
                     </div>
 
-                    <div className={`mt-2.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${badgeStyle}`}>
-                      {preview.label}
-                    </div>
+                    <div className={`mt-2.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${badgeStyle}`}>{preview.label}</div>
 
                     <div className="mt-2.5 flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => setBasketQty(product.id, 0)}
-                        className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-red-600"
-                      >
+                      <button type="button" onClick={() => setBasketQty(product.id, 0)} className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-red-600">
                         <Trash2 className="h-3.5 w-3.5" /> Remove
                       </button>
                       <div className="inline-flex items-center rounded-lg border border-gray-200 bg-gray-50">
@@ -414,7 +385,7 @@ export function BasketDrawer() {
                 );
               })}
 
-              {/* Smart 1-Tap Cold-Start Upsell Card when < £8.00 and no Closer item yet */}
+              {/* Smart 1-Tap Cold-Start Upsell Card */}
               {subtotalPence > 0 && subtotalPence < thresholdPence && !hasAlmostFullItem && topAlmostFullUpsell && (
                 <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 p-3.5 space-y-2.5">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
@@ -425,20 +396,13 @@ export function BasketDrawer() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-lg shrink-0">{topAlmostFullUpsell.imageEmoji}</span>
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-slate-900">
-                          {topAlmostFullUpsell.brand} · {topAlmostFullUpsell.name}
-                        </p>
+                        <p className="truncate text-xs font-semibold text-slate-900">{topAlmostFullUpsell.brand} · {topAlmostFullUpsell.name}</p>
                         <p className="text-[11px] text-emerald-700 font-medium">
-                          {topAlmostFullUpsell.openCaseRemainingSlots} spot{topAlmostFullUpsell.openCaseRemainingSlots === 1 ? '' : 's'} left ·{' '}
-                          {formatPence(topAlmostFullUpsell.effectiveSharePricePence)} (-{topAlmostFullUpsell.closerDiscountPercent}%)
+                          {topAlmostFullUpsell.openCaseRemainingSlots} spot{topAlmostFullUpsell.openCaseRemainingSlots === 1 ? '' : 's'} left · {formatPence(topAlmostFullUpsell.effectiveSharePricePence)} (-{topAlmostFullUpsell.closerDiscountPercent}%)
                         </p>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => addToBasket(topAlmostFullUpsell.id, 1)}
-                      className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700"
-                    >
+                    <button type="button" onClick={() => addToBasket(topAlmostFullUpsell.id, 1)} className="shrink-0 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-700">
                       + Add &amp; Waive Fee
                     </button>
                   </div>
@@ -465,16 +429,18 @@ export function BasketDrawer() {
               <div className="flex justify-between text-slate-600">
                 <span>Small-Order Hub Fee</span>
                 <span className={feePence === 0 ? 'font-semibold text-emerald-700' : 'font-medium text-slate-900'}>
-                  {feeWaivedByCloser && subtotalPence < thresholdPence
-                    ? '£0.00 — Waived by Closer Bonus! ⚡'
-                    : feePence === 0
-                      ? '£0.00'
-                      : formatPence(feePence)}
+                  {feeWaivedByCloser && subtotalPence < thresholdPence ? '£0.00 — Waived by Closer Bonus! ⚡' : feePence === 0 ? '£0.00' : formatPence(feePence)}
                 </span>
               </div>
+              {creditAppliedPence > 0 && (
+                <div className="flex justify-between font-semibold text-emerald-700">
+                  <span className="inline-flex items-center gap-1"><Gift className="h-3.5 w-3.5" /> Divly Wallet Credit</span>
+                  <span>-{formatPence(creditAppliedPence)}</span>
+                </div>
+              )}
               <div className="flex justify-between font-semibold text-emerald-700">
-                <span className="inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Total Saved vs Aldi</span>
-                <span>{formatPence(savedVsAldiPence)}</span>
+                <span className="inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Saved vs Supermarkets</span>
+                <span>{formatPence(savedVsSupermarketsPence)}</span>
               </div>
               <div className="flex justify-between border-t border-gray-200 pt-2 text-sm font-bold text-slate-900">
                 <span>Total to Pay</span>

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <title>Divly · Printable A4 UoB Hall Kitchen Poster</title>
+    <style>
+      :root {
+        --emerald: #059669;
+        --emerald-dark: #065f46;
+        --emerald-soft: #ecfdf5;
+        --amber-soft: #fffbeb;
+        --amber-border: #fde68a;
+        --amber-text: #92400e;
+        --ink: #111827;
+        --muted: #4b5563;
+        --border: #e5e7eb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px 16px 48px;
+        background: #f3f4f6;
+        color: var(--ink);
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .toolbar {
+        max-width: 210mm;
+        margin: 0 auto 16px;
+        padding: 12px 16px;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      }
+
+      .toolbar-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .toolbar input {
+        padding: 7px 11px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 13px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-transform: uppercase;
+        width: 145px;
+      }
+
+      .btn-print {
+        background: var(--emerald);
+        color: #ffffff;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .btn-back {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .sheet {
+        width: 210mm;
+        min-height: 285mm;
+        max-width: 100%;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 14mm 15mm;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .top-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding-bottom: 14px;
+        border-bottom: 2px solid #f3f4f6;
+      }
+
+      .campus-pill {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: var(--emerald-soft);
+        color: var(--emerald-dark);
+        border: 1px solid #a7f3d0;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .hero-headline {
+        font-size: 36px;
+        line-height: 1.12;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        margin: 4px 0 8px;
+      }
+
+      .hero-headline span {
+        color: var(--emerald);
+      }
+
+      .hero-sub {
+        font-size: 16px;
+        line-height: 1.45;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .bonus-banner {
+        background: var(--amber-soft);
+        border: 1.5px solid var(--amber-border);
+        border-radius: 14px;
+        padding: 14px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .bonus-banner strong {
+        color: var(--amber-text);
+        font-size: 17px;
+      }
+
+      .code-chip {
+        background: #ffffff;
+        border: 1px solid var(--amber-border);
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-weight: 800;
+        font-size: 15px;
+        color: var(--ink);
+        letter-spacing: 0.06em;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+
+      .step-card {
+        background: #f9fafb;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+      }
+
+      .step-num {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: var(--emerald);
+        color: #ffffff;
+        font-weight: 800;
+        font-size: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 8px;
+      }
+
+      .step-card h3 {
+        margin: 0 0 5px;
+        font-size: 15px;
+        font-weight: 800;
+      }
+
+      .step-card p {
+        margin: 0;
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .examples-box {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+
+      .examples-header {
+        background: #f9fafb;
+        padding: 10px 16px;
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .examples-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .example-item {
+        padding: 11px 16px;
+        border-bottom: 1px solid #f3f4f6;
+        border-right: 1px solid #f3f4f6;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 13.5px;
+      }
+
+      .example-price {
+        font-weight: 800;
+        color: var(--emerald-dark);
+        white-space: nowrap;
+      }
+
+      .example-rrp {
+        color: #9ca3af;
+        text-decoration: line-through;
+        font-size: 12px;
+        font-weight: 500;
+        margin-left: 4px;
+      }
+
+      .qr-footer {
+        background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+        border: 2px solid #6ee7b7;
+        border-radius: 16px;
+        padding: 18px 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .qr-box {
+        background: #ffffff;
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid #a7f3d0;
+        flex-shrink: 0;
+      }
+
+      .fine-print {
+        font-size: 10.5px;
+        color: #6b7280;
+        text-align: center;
+        margin: 0;
+      }
+
+      @page {
+        size: A4 portrait;
+        margin: 8mm;
+      }
+
+      @media print {
+        body {
+          background: #ffffff;
+          padding: 0;
+        }
+        .toolbar {
+          display: none !important;
+        }
+        .sheet {
+          width: 100%;
+          min-height: auto;
+          border: none;
+          box-shadow: none;
+          padding: 6mm 8mm;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <a href="/" class="btn-back">← Back to Divly Storefront</a>
+      <div class="toolbar-controls">
+        <label for="poster-ref" style="font-size: 12px; font-weight: 700; color: #374151;">
+          Hall Invite Code:
+        </label>
+        <input id="poster-ref" type="text" value="UOB-VALE50" maxlength="18" />
+        <button type="button" class="btn-print" id="print-btn">
+          🖨️ Print A4 Kitchen Poster
+        </button>
+      </div>
+    </div>
+
+    <main class="sheet">
+      <div>
+        <div class="top-row">
+          <img src="/logo.svg" alt="Divly" height="46" />
+          <span class="campus-pill">University of Birmingham · Hall Co-Op</span>
+        </div>
+
+        <div style="margin-top: 16px;">
+          <h1 class="hero-headline">
+            Stop overpaying for flat staples.<br />
+            <span>Split wholesale cases for 15–35% less.</span>
+          </h1>
+          <p class="hero-sub">
+            Chip in anonymously with other UoB students on factory-sealed bulk cases of rice, ramen, oat drink, coffee &amp; household essentials — cheaper than UK supermarkets, with zero group-chat chasing.
+          </p>
+        </div>
+      </div>
+
+      <div class="bonus-banner">
+        <div>
+          <strong>🎁 Flat Kitchen Welcome Offer: Get £0.50 Off Your First Drop!</strong>
+          <div style="font-size: 12.5px; color: #78350f; margin-top: 2px;">
+            Sign in with your <code>@student.bham.ac.uk</code> email &amp; enter invite code at login:
+          </div>
+        </div>
+        <span class="code-chip" id="poster-code-display">UOB-VALE50</span>
+      </div>
+
+      <section class="steps" aria-label="How Divly works">
+        <div class="step-card">
+          <span class="step-num">1</span>
+          <h3>Chip In Online</h3>
+          <p>
+            Pick student-sized sealed shares (e.g. 5kg rice or 5-pack noodles). No need to buy or store a giant 20kg crate solo.
+          </p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">2</span>
+          <h3>Lock Wholesale Prices</h3>
+          <p>
+            As UoB students join the same pool, boxes hit 100% capacity. Almost-full boxes unlock an extra 6–10% Closer Bonus + £0 fee!
+          </p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">3</span>
+          <h3>Saturday Hub Pickup</h3>
+          <p>
+            Collect with your QR pass at Shackleton Hub (Sat 12:00–15:00). Any unfilled overflow slot is <strong>100% auto-refunded</strong>.
+          </p>
+        </div>
+      </section>
+
+      <section class="examples-box" aria-label="Sample bulk share prices">
+        <div class="examples-header">
+          Typical Student Share Savings vs Standard UK Supermarkets
+        </div>
+        <div class="examples-grid">
+          <div class="example-item">
+            <span>🍚 <strong>5kg Basmati Rice</strong> (Sealed Bag)</span>
+            <span class="example-price">£5.95 <span class="example-rrp">£8.25</span></span>
+          </div>
+          <div class="example-item">
+            <span>🍜 <strong>Nongshim Shin Ramyun</strong> (5-Pack)</span>
+            <span class="example-price">£3.95 <span class="example-rrp">£5.50</span></span>
+          </div>
+          <div class="example-item">
+            <span>🥛 <strong>Oatly Barista UHT</strong> (3 × 1L Share)</span>
+            <span class="example-price">£4.35 <span class="example-rrp">£6.30</span></span>
+          </div>
+          <div class="example-item">
+            <span>🧻 <strong>3-Ply Toilet Tissue</strong> (9-Roll Pack)</span>
+            <span class="example-price">£2.85 <span class="example-rrp">£3.99</span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="qr-footer">
+        <div style="space-y: 6px;">
+          <div style="font-size: 12px; font-weight: 800; color: #047857; text-transform: uppercase; letter-spacing: 0.05em;">
+            Weekly Cutoff: Wednesday 23:59 · Pickup: Vale Shackleton Forecourt
+          </div>
+          <h2 style="margin: 4px 0 6px; font-size: 22px; font-weight: 900; color: #111827;">
+            Scan with your phone camera to join this week’s drop →
+          </h2>
+          <p style="margin: 0; font-size: 13px; color: #374151;">
+            Verified UoB students only (<code>@student.bham.ac.uk</code> / <code>@bham.ac.uk</code>) · Apple Pay, Google Pay &amp; Visa/Mastercard accepted.
+          </p>
+        </div>
+
+        <div class="qr-box">
+          <svg height="126" width="126" viewBox="0 0 29 29" role="img" aria-label="Scan to open Divly UoB">
+            <path fill="#FFFFFF" d="M0,0 h29v29H0z" shape-rendering="crispEdges"></path>
+            <path fill="#111827" d="M0 0h7v1H0zM8 0h1v1H8zM10 0h2v1H10zM13 0h2v1H13zM16 0h3v1H16zM22,0 h7v1H22zM0 1h1v1H0zM6 1h1v1H6zM11 1h3v1H11zM17 1h3v1H17zM22 1h1v1H22zM28,1 h1v1H28zM0 2h1v1H0zM2 2h3v1H2zM6 2h1v1H6zM9 2h2v1H9zM12 2h1v1H12zM14 2h2v1H14zM17 2h2v1H17zM20 2h1v1H20zM22 2h1v1H22zM24 2h3v1H24zM28,2 h1v1H28zM0 3h1v1H0zM2 3h3v1H2zM6 3h1v1H6zM8 3h2v1H8zM12 3h2v1H12zM16 3h1v1H16zM20 3h1v1H20zM22 3h1v1H22zM24 3h3v1H24zM28,3 h1v1H28zM0 4h1v1H0zM2 4h3v1H2zM6 4h1v1H6zM8 4h1v1H8zM10 4h2v1H10zM13 4h1v1H13zM16 4h3v1H16zM22 4h1v1H22zM24 4h3v1H24zM28,4 h1v1H28zM0 5h1v1H0zM6 5h1v1H6zM8 5h2v1H8zM11 5h3v1H11zM16 5h2v1H16zM19 5h2v1H19zM22 5h1v1H22zM28,5 h1v1H28zM0 6h7v1H0zM8 6h1v1H8zM10 6h1v1H10zM12 6h1v1H12zM14 6h1v1H14zM16 6h1v1H16zM18 6h1v1H18zM20 6h1v1H20zM22,6 h7v1H22zM8 7h2v1H8zM11 7h1v1H11zM14 7h7v1H14zM0 8h1v1H0zM4 8h1v1H4zM6 8h3v1H6zM14 8h1v1H14zM17 8h2v1H17zM20 8h6v1H20zM28,8 h1v1H28zM2 9h1v1H2zM4 9h2v1H4zM8 9h2v1H8zM13 9h1v1H13zM16 9h2v1H16zM20,9 h9v1H20zM3 10h1v1H3zM5 10h3v1H5zM10 10h1v1H10zM12 10h1v1H12zM15 10h2v1H15zM18 10h1v1H18zM20 10h2v1H20zM23 10h1v1H23zM28,10 h1v1H28zM2 11h2v1H2zM5 11h1v1H5zM7 11h2v1H7zM10 11h3v1H10zM17 11h4v1H17zM22 11h1v1H22zM24 11h2v1H24zM27,11 h2v1H27zM0 12h1v1H0zM4 12h4v1H4zM9 12h1v1H9zM13 12h2v1H13zM16 12h2v1H16zM20 12h1v1H20zM27 12h1v1H27zM1 13h2v1H1zM4 13h1v1H4zM10 13h1v1H10zM12 13h1v1H12zM14 13h1v1H14zM16 13h1v1H16zM22,13 h7v1H22zM1 14h2v1H1zM6 14h1v1H6zM10 14h1v1H10zM13 14h3v1H13zM20 14h1v1H20zM23 14h4v1H23zM28,14 h1v1H28zM1 15h1v1H1zM4 15h1v1H4zM10 15h4v1H10zM15 15h1v1H15zM17 15h1v1H17zM19 15h1v1H19zM22 15h1v1H22zM27,15 h2v1H27zM1 16h3v1H1zM5 16h2v1H5zM8 16h2v1H8zM11 16h3v1H11zM15 16h1v1H15zM17 16h1v1H17zM19 16h3v1H19zM23 16h1v1H23zM27 16h1v1H27zM0 17h4v1H0zM8 17h2v1H8zM11 17h5v1H11zM18 17h1v1H18zM21 17h5v1H21zM27,17 h2v1H27zM2 18h1v1H2zM4 18h1v1H4zM6 18h1v1H6zM8 18h1v1H8zM11 18h2v1H11zM15 18h4v1H15zM22 18h1v1H22zM26 18h1v1H26zM28,18 h1v1H28zM2 19h1v1H2zM4 19h1v1H4zM7 19h1v1H7zM9 19h2v1H9zM12 19h1v1H12zM14 19h1v1H14zM16 19h5v1H16zM22 19h3v1H22zM27,19 h2v1H27zM0 20h4v1H0zM5 20h2v1H5zM10 20h1v1H10zM12 20h3v1H12zM17 20h1v1H17zM20 20h6v1H20zM28,20 h1v1H28zM8 21h1v1H8zM16 21h1v1H16zM18 21h3v1H18zM24 21h1v1H24zM28,21 h1v1H28zM0 22h7v1H0zM8 22h8v1H8zM18 22h3v1H18zM22 22h1v1H22zM24 22h3v1H24zM28,22 h1v1H28zM0 23h1v1H0zM6 23h1v1H6zM9 23h3v1H9zM13 23h1v1H13zM17 23h1v1H17zM20 23h1v1H20zM24 23h1v1H24zM0 24h1v1H0zM2 24h3v1H2zM6 24h1v1H6zM8 24h3v1H8zM12 24h2v1H12zM15 24h1v1H15zM17 24h9v1H17zM27 24h1v1H27zM0 25h1v1H0zM2 25h3v1H2zM6 25h1v1H6zM9 25h1v1H9zM11 25h4v1H11zM16 25h2v1H16zM19 25h1v1H19zM21 25h1v1H21zM28,25 h1v1H28zM0 26h1v1H0zM2 26h3v1H2zM6 26h1v1H6zM9 26h1v1H9zM12 26h2v1H12zM15 26h1v1H15zM17 26h2v1H17zM21 26h1v1H21zM25,26 h4v1H25zM0 27h1v1H0zM6 27h1v1H6zM10 27h1v1H10zM14 27h2v1H14zM17 27h2v1H17zM20 27h1v1H20zM23 27h1v1H23zM25 27h1v1H25zM27,27 h2v1H27zM0 28h7v1H0zM8 28h1v1H8zM11 28h1v1H11zM14 28h1v1H14zM16 28h1v1H16zM20 28h6v1H20zM27 28h1v1H27z" shape-rendering="crispEdges"></path>
+          </svg>
+        </div>
+      </section>
+
+      <p class="fine-print">
+        100% factory-sealed ambient multipacks &amp; household goods (UK FIR 2014). Always check manufacturer packaging for allergens. Independent student initiative — not an official department of the University of Birmingham.
+      </p>
+    </main>
+
+    <script>
+      (function () {
+        var input = document.getElementById('poster-ref');
+        var badge = document.getElementById('poster-code-display');
+        var printBtn = document.getElementById('print-btn');
+        if (input && badge) {
+          input.addEventListener('input', function () {
+            badge.textContent = input.value.trim().toUpperCase() || 'UOB-VALE50';
+          });
+        }
+        if (printBtn) {
+          printBtn.addEventListener('click', function () {
+            window.print();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

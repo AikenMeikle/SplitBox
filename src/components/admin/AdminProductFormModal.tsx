@@ -29,7 +29,7 @@ export interface ProductFormState {
 export const EMPTY_PRODUCT_FORM: ProductFormState = {
   id: null, name: '', brand: '', category: 'Rice & Noodles', imageEmoji: '🛒',
   unitDescription: '', caseDescription: '', caseSize: '4', sharePriceGbp: '2.50',
-  aldiPriceGbp: '3.49', aldiUnitLabel: 'equiv. at Aldi', wholesaleCaseCostGbp: '8.50',
+  aldiPriceGbp: '3.49', aldiUnitLabel: 'Supermarket equiv.', wholesaleCaseCostGbp: '8.50',
   eanBarcode: '', shelfLifeWeeks: '26', isActive: true,
 };
 
@@ -103,7 +103,7 @@ export function AdminProductFormModal({
       caseSize,
       sharePricePence: sharePence,
       aldiPricePence: aldiPence,
-      aldiUnitLabel: form.aldiUnitLabel.trim() || 'at Aldi',
+      aldiUnitLabel: form.aldiUnitLabel.trim() || 'Supermarket equiv.',
       wholesaleCaseCostPence: caseCostPence,
       eanBarcode: form.eanBarcode.trim() || undefined,
       shelfLifeWeeks: Math.max(1, Math.round(parseInt(form.shelfLifeWeeks, 10) || 26)),
@@ -188,7 +188,7 @@ export function AdminProductFormModal({
             <input type="number" step="0.01" min="0.01" required value={form.sharePriceGbp} onChange={(e) => setForm({ ...form, sharePriceGbp: e.target.value })} className={inputCls} />
           </div>
           <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Aldi Price (£)</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Supermarket Benchmark (£)</label>
             <input type="number" step="0.01" min="0.01" required value={form.aldiPriceGbp} onChange={(e) => setForm({ ...form, aldiPriceGbp: e.target.value })} className={inputCls} />
           </div>
           <div className="sm:col-span-2">
@@ -197,8 +197,8 @@ export function AdminProductFormModal({
           </div>
 
           <div className="sm:col-span-3">
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Aldi Comparison Label</label>
-            <input type="text" required placeholder="e.g. 5-pack equiv. at Aldi" value={form.aldiUnitLabel} onChange={(e) => setForm({ ...form, aldiUnitLabel: e.target.value })} className={inputCls} />
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Public Comparison Unit Label</label>
+            <input type="text" required placeholder="e.g. 5-pack supermarket equiv." value={form.aldiUnitLabel} onChange={(e) => setForm({ ...form, aldiUnitLabel: e.target.value })} className={inputCls} />
           </div>
           <div className="sm:col-span-2">
             <label className="block text-xs font-semibold text-slate-700 mb-1">EAN-13 Barcode</label>

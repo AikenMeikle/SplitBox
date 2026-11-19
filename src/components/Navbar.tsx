@@ -5,13 +5,16 @@
  * - Divly brand lockup & active University of Birmingham pickup hub pill
  * - Real-time ticking countdown timer to `settings.cutoffAtIso`
  * - Navigation tabs (`Shop Bulk Pools`, `My Orders & Pass`, `Admin`)
+ * - Student wallet credit badge (`£X.XX Credit`) & `🎁 Give £0.50, Get £1` referral link copier
  * - Optional 1-click Dev Login bar (shown ONLY when backend reports `devMode === true`)
  * - Student/Admin account pill & live Trolley button with item count and subtotal
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Check,
   Clock,
+  Gift,
   LogOut,
   MapPin,
   Package,
@@ -19,10 +22,11 @@ import {
   ShoppingBasket,
   Store,
   User,
+  Wallet,
   Zap,
 } from 'lucide-react';
 import { BRAND_NAME } from '../config/brand';
-import { useApp } from '../context/AppContext';
+import { getStoredReferralCode, useApp } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
 import { formatPence, type AuthUser } from '../shared/types';
 
@@ -64,9 +68,9 @@ export function Navbar() {
     logout,
   } = useApp();
 
-  // Live ticking clock updated once per second for the drop cutoff timer
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [devBusy, setDevBusy] = useState<string | null>(null);
+  const [referralCopied, setReferralCopied] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -75,14 +79,14 @@ export function Navbar() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Compute basket subtotal in integer pence from current product share prices
+  // Compute basket subtotal in integer pence from effective share prices
   const basketSubtotalPence = useMemo(() => {
     let sum = 0;
     for (const [productId, qty] of Object.entries(basket)) {
       if (qty <= 0) continue;
       const item = products.find((p) => p.id === productId);
       if (item) {
-        sum += item.sharePricePence * qty;
+        sum += item.effectiveSharePricePence * qty;
       }
     }
     return sum;
@@ -92,14 +96,16 @@ export function Navbar() {
   const countdownText = isClosed
     ? 'Drop Closed · Settled'
     : formatCountdown(settings?.cutoffAtIso, nowMs);
+  const creditBalancePence = user?.creditBalancePence ?? 0;
 
   async function handleQuickDevLogin(role: 'student' | 'admin', persona?: string) {
     const key = `${role}:${persona ?? 'default'}`;
     setDevBusy(key);
     try {
+      const referralCode = getStoredReferralCode() || undefined;
       const res = await apiFetch<{ token: string; user: AuthUser }>('/api/auth/dev-login', {
         method: 'POST',
-        body: JSON.stringify({ role, persona }),
+        body: JSON.stringify({ role, persona, referralCode }),
       });
       loginWithToken(res.token, res.user);
       if (role === 'admin') {
@@ -109,6 +115,19 @@ export function Navbar() {
       console.error('Dev login failed:', err);
     } finally {
       setDevBusy(null);
+    }
+  }
+
+  async function handleCopyReferralLink() {
+    if (!user?.referralCode) return;
+    const shareUrl = `${window.location.origin}/?ref=${encodeURIComponent(user.referralCode)}`;
+    const inviteText = `Join me on ${BRAND_NAME} to split wholesale bulk groceries at UoB! Use my campus link for £0.50 off your first drop: ${shareUrl}`;
+    try {
+      await navigator.clipboard.writeText(inviteText);
+      setReferralCopied(true);
+      window.setTimeout(() => setReferralCopied(false), 2500);
+    } catch {
+      window.open(`https://wa.me/?text=${encodeURIComponent(inviteText)}`, '_blank', 'noopener,noreferrer');
     }
   }
 
@@ -185,7 +204,7 @@ export function Navbar() {
           </button>
 
           {settings && (
-            <div className="hidden lg:flex items-center gap-2 text-xs">
+            <div className="hidden xl:flex items-center gap-2 text-xs">
               <span className="badge-slate" title={settings.hubAddress}>
                 <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span>{settings.hubShortLabel || settings.hubName}</span>
@@ -200,12 +219,43 @@ export function Navbar() {
           )}
         </div>
 
-        {/* Right: User Auth Controls + Trolley Button */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Wallet Credit, Referral Link, User Auth Controls + Trolley Button */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {user && creditBalancePence > 0 && (
+            <span
+              className="badge-green tabular-nums"
+              title="Automatically applied at checkout"
+            >
+              <Wallet className="w-3.5 h-3.5 shrink-0" />
+              <span>{formatPence(creditBalancePence)} Credit</span>
+            </span>
+          )}
+
+          {user?.referralCode && (
+            <button
+              type="button"
+              onClick={() => void handleCopyReferralLink()}
+              title={`Copy your campus invite link (?ref=${user.referralCode})`}
+              className="hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold cursor-pointer transition-colors"
+            >
+              {referralCopied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Invite Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Gift className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>🎁 Give £0.50, Get £1</span>
+                </>
+              )}
+            </button>
+          )}
+
           {user ? (
             <div className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full bg-gray-100 border border-gray-200 text-xs sm:text-sm">
               <User className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span className="font-semibold text-gray-800 max-w-[92px] sm:max-w-[150px] truncate">
+              <span className="font-semibold text-gray-800 max-w-[84px] sm:max-w-[130px] truncate">
                 {user.name || user.email.split('@')[0]}
               </span>
               {user.role === 'admin' && (
@@ -267,7 +317,7 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* Sub-Header Bar: Navigation Tabs + Mobile Live Hub/Timer Info */}
+      {/* Sub-Header Bar: Navigation Tabs + Mobile Referral & Live Timer Info */}
       <div className="border-t border-gray-100 bg-gray-50/70">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 flex flex-wrap items-center justify-between gap-2">
           <nav className="flex items-center gap-1 sm:gap-2 overflow-x-auto py-1.5" aria-label="Main navigation">
@@ -331,11 +381,22 @@ export function Navbar() {
                 <span>Admin</span>
               </button>
             )}
+
+            {user?.referralCode && (
+              <button
+                type="button"
+                onClick={() => void handleCopyReferralLink()}
+                className="md:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold cursor-pointer whitespace-nowrap"
+              >
+                <Gift className="w-3 h-3 shrink-0" />
+                <span>{referralCopied ? 'Copied!' : '🎁 Give £0.50, Get £1'}</span>
+              </button>
+            )}
           </nav>
 
-          {/* Compact Hub & Live Timer visible on mobile/tablet below lg */}
+          {/* Compact Hub & Live Timer visible below xl */}
           {settings && (
-            <div className="flex lg:hidden items-center gap-2 py-1 text-[11px] sm:text-xs text-gray-600 tabular-nums">
+            <div className="flex xl:hidden items-center gap-2 py-1 text-[11px] sm:text-xs text-gray-600 tabular-nums">
               <span className="inline-flex items-center gap-1 font-medium text-gray-700 truncate max-w-[165px] sm:max-w-none">
                 <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
                 <span className="truncate">{settings.hubShortLabel || settings.hubName}</span>

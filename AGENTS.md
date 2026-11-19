@@ -6,15 +6,16 @@
 
 ## 1. Product & Engineering Principles
 
-1. **What Divly Does:** Students at the University of Birmingham chip in with other students they don't know to split wholesale bulk cases at prices **cheaper than Aldi**. Pools close at a weekly cutoff; `100%` filled cases are fulfilled for campus hub pickup (verified via HMAC-SHA256 QR pass or 6-digit PIN), while unfilled overflow slots are **automatically refunded**.
+1. **What Divly Does:** Students at the University of Birmingham chip in with other students they don't know to split wholesale bulk cases at prices **15–35% lower than UK supermarket prices**. Pools close at a weekly cutoff; `100%` filled cases (plus shelf-stable cases underwritten via the Buy-Ahead Predictor) are fulfilled for campus hub pickup (verified via HMAC-SHA256 QR pass or 6-digit PIN), while unfilled overflow slots are **automatically refunded**.
 2. **Full-Stack Single-Repo Architecture:**
-   - **Backend (`server/`):** Node.js 22 (`tsx`) + Express (`express`) + built-in `node:sqlite` (`DatabaseSync` in WAL mode at `data/divly.sqlite`, configurable via `SQLITE_PATH`) + `node:crypto` (`HMAC-SHA256`, `randomBytes`, `timingSafeEqual`). Serves `/api/*`, `/api/events` (SSE real-time updates), and static `dist/` in production on one port (`PORT`, default `3001` in dev API / `3000` in prod).
+   - **Backend (`server/`):** Node.js 22 (`tsx`) + Express (`express`) + built-in `node:sqlite` (`DatabaseSync` in WAL mode at `data/divly.sqlite`, configurable via `SQLITE_PATH`) + `node:crypto` (`HMAC-SHA256`, `randomBytes`, `timingSafeEqual`). Serves `/api/*`, `/api/events` (SSE real-time updates), `/flyer.html`, and static `dist/` in production on one port (`PORT`, default `3001` in dev API / `3000` in prod).
    - **Frontend (`src/`):** React 19 + TypeScript + Vite + Tailwind CSS v4 + `@fontsource/*` + `lucide-react` + `qrcode.react`.
-3. **Visual Style (Clean Modern Grocery App — Ocado / Tesco / Deliveroo Feel):**
+3. **Visual Style & Public Copy Rule (Clean Modern Grocery App — Ocado / Tesco / Deliveroo Feel):**
    - Crisp light surfaces (`#F9FAFB` background, `#FFFFFF` cards, `1px solid #E5E7EB` subtle borders, soft `0 1px 3px rgba(0,0,0,0.05)` shadows, `12px` rounded cards). **NO neo-brutalist thick black borders, NO hard offset shadows, NO radial citrus wheels.**
-   - Fresh grocery emerald (`#059669` / `#047857`, `#ECFDF5` soft badge fill) for **"Save X% vs Aldi"** tags and horizontal segmented slot progress bars (`"3 of 4 students chipped in"`).
+   - Fresh grocery emerald (`#059669` / `#047857`, `#ECFDF5` soft badge fill) for **"Save X% vs Supermarkets"** tags and horizontal segmented slot progress bars (`"3 of 4 students chipped in"`).
+   - **Zero Public Competitor Names:** Student-facing UI, seeded `aldiUnitLabel` values, and `/flyer.html` must **NEVER** display competing supermarket names like `"Aldi"` (use `"Supermarket equiv."` / `"Save X% vs Supermarkets"`). Internal TypeScript field identifiers (`aldiPricePence`, `aldiUnitLabel`, `totalAldiComparisonPence`) are preserved for schema compatibility, and internal Admin-only benchmarking labels inside `src/components/admin/` are permitted.
    - Integer GBP pence (`£`) everywhere in database, API, and state. Format via `formatPence(pence)` only in UI.
-4. **Brand Configurability:** Keep brand name (`Divly`), campus (`University of Birmingham`), and domain rules in `src/config/brand.ts` so the founder can rename the brand in one file.
+4. **Brand Configurability & Launch Docs:** Keep brand name (`Divly`), campus (`University of Birmingham`), and domain rules in `src/config/brand.ts`. See [`STUDENT_DEV_GUIDE.md`](./STUDENT_DEV_GUIDE.md) for codebase & algorithm guides and [`LAUNCH_IN_14_DAYS.md`](./LAUNCH_IN_14_DAYS.md) for the UoB 2-week launch playbook.
 
 ---
 
@@ -203,6 +204,14 @@ All JSON endpoints accept `Authorization: Bearer <token>` (stored in `localStora
   - `DELETE /api/admin/products/:id` → `{ ok: true }`
   - `POST /api/admin/scan/verify` → `{ input: string }` → `ScanLookupResult`
   - `POST /api/admin/scan/collect` → `{ orderId: string }` → `{ order: Order }`
+  - `GET /api/admin/wholesale/search?q=...` → `{ results: LiveSupplierProductResult[] }`
+  - `POST /api/admin/wholesale/order` → `{ includeBuyAheadProductIds?: string[] }` → `{ order: WholesalePurchaseOrder, ...AdminSummary }`
+  - `PUT /api/admin/requests/:id` → `{ status: 'open' | 'stocked' }` → `{ request: ProductRequest }`
+  - `GET /api/admin/backup` → JSON attachment export (`settings`, `products`, `orders`, `wholesaleOrders`, `productRequests`, `exportedAt`)
+- **Student Item Request Board:**
+  - `GET /api/requests` → `{ requests: ProductRequest[] }`
+  - `POST /api/requests` → `{ itemName: string, brandOrSize: string, category: string }` → `{ request: ProductRequest }`
+  - `POST /api/requests/:id/vote` → toggles upvote → `{ request: ProductRequest }`
 
 ---
 

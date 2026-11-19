@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Edit3, Globe, PackagePlus, Search, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../lib/api';
-import { formatPence, type AdminSummary } from '../../shared/types';
+import { formatPence, type AdminSummary, type ProductRequest } from '../../shared/types';
 import {
   AdminProductFormModal,
   EMPTY_PRODUCT_FORM,
   productToForm,
   type ProductFormState,
 } from './AdminProductFormModal';
+import { AdminRequestsPanel } from './AdminRequestsPanel';
 import { AdminSupplierImportModal } from './AdminSupplierImportModal';
 
 interface AdminProductsTabProps {
@@ -16,8 +17,8 @@ interface AdminProductsTabProps {
 }
 
 /**
- * No-Code Product, EAN Barcode, Shelf-Life & Aldi Price Manager,
- * including Live UK Wholesale / Open Food Facts 1-Click Catalog Import.
+ * No-Code Product, EAN Barcode, Shelf-Life & Benchmark Price Manager,
+ * including Live UK Wholesale Import & Student Item Requests triage.
  */
 export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps) {
   const [query, setQuery] = useState('');
@@ -51,6 +52,18 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
     }
   }
 
+  function handleDraftFromRequest(req: ProductRequest) {
+    setForm({
+      ...EMPTY_PRODUCT_FORM,
+      name: req.itemName,
+      brand: req.brandOrSize || 'Wholesale UK',
+      category: req.category || 'Cooking Staples',
+      unitDescription: req.brandOrSize || 'Multipack share',
+      caseDescription: 'Wholesale outer case',
+    });
+    setModalOpen(true);
+  }
+
   return (
     <div className="space-y-4">
       {banner && (
@@ -59,6 +72,13 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
           <span>{banner.text}</span>
         </div>
       )}
+
+      <AdminRequestsPanel
+        requests={summary.productRequests ?? []}
+        onReloadAll={onReloadAll}
+        onDraftFromRequest={handleDraftFromRequest}
+        onNotify={setBanner}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="relative flex-1 min-w-[220px] max-w-sm">
@@ -98,7 +118,7 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
               <tr>
                 <th className="px-5 py-3">Item, EAN &amp; Shelf Life</th>
                 <th className="px-4 py-3">Share / Case Split</th>
-                <th className="px-4 py-3 text-right">Divly vs Aldi</th>
+                <th className="px-4 py-3 text-right">Divly vs Benchmark</th>
                 <th className="px-4 py-3 text-right">Wholesale &amp; Margin</th>
                 <th className="px-4 py-3 text-center">Live Pool</th>
                 <th className="px-5 py-3 text-right">Actions</th>
@@ -133,7 +153,7 @@ export function AdminProductsTab({ summary, onReloadAll }: AdminProductsTabProps
                         {formatPence(p.sharePricePence)} <span className="font-normal text-slate-400 line-through">{formatPence(p.aldiPricePence)}</span>
                       </p>
                       <span className="inline-block rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                        Save {p.savingsPercent}% vs Aldi
+                        Save {p.savingsPercent}%
                       </span>
                     </td>
                     <td className="px-4 py-3.5 text-right">

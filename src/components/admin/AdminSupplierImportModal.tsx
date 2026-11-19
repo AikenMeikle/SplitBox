@@ -37,7 +37,7 @@ function mapSupplierItemToProduct(item: LiveSupplierProductResult): Omit<Product
     caseSize,
     sharePricePence: item.suggestedSharePricePence,
     aldiPricePence: item.estimatedAldiPricePence,
-    aldiUnitLabel: `${unitDesc} equiv. at Aldi`,
+    aldiUnitLabel: `${unitDesc} supermarket equiv.`,
     wholesaleCaseCostPence: item.estimatedWholesaleCaseCostPence,
     isActive: true,
     eanBarcode: item.eanBarcode,
