@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { AuthUser, ProductCategory } from '../src/shared/types.ts';
+import { generateUniqueReferralCode } from './db.ts';
 import { confirmOrderPayment, createPendingOrder } from './services/poolAllocator.ts';
 
 interface SeedProductInput {
@@ -21,9 +22,9 @@ interface SeedProductInput {
 }
 
 /**
- * 12 realistic wholesale bulk staples across all 5 student categories, complete
- * with real UK EAN-13 barcodes and shelf-life durations (including 1 fresh 2-week
- * bakery item to demonstrate `AUTO_REFUND` vs shelf-stable `SAFE_BUY_AHEAD`).
+ * 12 realistic wholesale bulk staples across all 5 student grocery categories.
+ * Public unit comparison labels refer generically to UK supermarket packs (never naming
+ * competing supermarket chains on student-facing screens).
  */
 export const DEFAULT_PRODUCTS: SeedProductInput[] = [
   {
@@ -37,7 +38,7 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     caseSize: 4,
     sharePricePence: 645,
     aldiPricePence: 849,
-    aldiUnitLabel: 'Aldi 5kg Basmati equiv.',
+    aldiUnitLabel: '5kg Basmati supermarket equiv.',
     wholesaleCaseCostPence: 2200,
     eanBarcode: '5011157010502',
     shelfLifeWeeks: 52,
@@ -117,7 +118,7 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     caseSize: 4,
     sharePricePence: 295,
     aldiPricePence: 399,
-    aldiUnitLabel: 'Aldi 4-pack protein flapjacks',
+    aldiUnitLabel: '4-pack protein flapjacks',
     wholesaleCaseCostPence: 1020,
     eanBarcode: '5060088707821',
     shelfLifeWeeks: 26,
@@ -136,7 +137,7 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     aldiUnitLabel: '2 × 4-pack protein bagels',
     wholesaleCaseCostPence: 980,
     eanBarcode: '5010044009085',
-    shelfLifeWeeks: 2, // Short 2-week bakery shelf life -> triggers AUTO_REFUND in Buy-Ahead Predictor!
+    shelfLifeWeeks: 2,
   },
   {
     id: 'prod-nicky-toilet-9pk',
@@ -149,7 +150,7 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
     caseSize: 5,
     sharePricePence: 275,
     aldiPricePence: 369,
-    aldiUnitLabel: 'Aldi Saxon 9-roll 3-ply',
+    aldiUnitLabel: '9-roll 3-ply supermarket pack',
     wholesaleCaseCostPence: 1150,
     eanBarcode: '8004260454117',
     shelfLifeWeeks: 52,
@@ -220,6 +221,41 @@ export const DEFAULT_PRODUCTS: SeedProductInput[] = [
   },
 ];
 
+const DEFAULT_REQUESTS = [
+  {
+    id: 'req-indomie-spicy',
+    itemName: 'Indomie Spicy Chicken (40-Pack)',
+    brandOrSize: '40 × 85g carton split into 10-packs',
+    category: 'Rice & Noodles',
+    requestedByName: 'Aisha M. · Chamberlain',
+    baseUpvotes: 19,
+  },
+  {
+    id: 'req-myprotein-layered',
+    itemName: 'MyProtein Layered Bar Box',
+    brandOrSize: '12 × 60g box split into 3-packs',
+    category: 'Protein & Snacks',
+    requestedByName: 'Josh T. · Selly Oak',
+    baseUpvotes: 15,
+  },
+  {
+    id: 'req-cushelle-kitchen',
+    itemName: 'Cushelle Quilted Kitchen Roll',
+    brandOrSize: '12 jumbo rolls bale split into 3-rolls',
+    category: 'Toiletries & Laundry',
+    requestedByName: 'Elena R. · Shackleton',
+    baseUpvotes: 12,
+  },
+  {
+    id: 'req-redbull-sugarfree',
+    itemName: 'Red Bull Sugarfree 24-Tray',
+    brandOrSize: '24 × 250ml tray split into 6-packs',
+    category: 'Drinks & Caffeine',
+    requestedByName: 'Dan K. · Maple Bank',
+    baseUpvotes: 9,
+  },
+];
+
 export function seedDatabase(
   db: DatabaseSync,
   options?: { includeDemoPools?: boolean }
@@ -281,12 +317,36 @@ export function seedDatabase(
       );
     });
   } else {
-    // Backfill barcodes & shelf life if loading an earlier SQLite file
     const backfillStmt = db.prepare(
       "UPDATE products SET ean_barcode = ?, shelf_life_weeks = ? WHERE id = ? AND ean_barcode = ''"
     );
     for (const p of DEFAULT_PRODUCTS) {
       backfillStmt.run(p.eanBarcode, p.shelfLifeWeeks, p.id);
+    }
+  }
+
+  // Seed initial campus bulk-item suggestions board
+  const reqCount = Number(
+    (db.prepare('SELECT COUNT(*) AS cnt FROM product_requests').get() as { cnt: number }).cnt
+  );
+  if (reqCount === 0) {
+    const nowIso = new Date().toISOString();
+    const insertReq = db.prepare(`
+      INSERT INTO product_requests (
+        id, item_name, brand_or_size, category, requested_by_name,
+        base_upvotes, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+    `);
+    for (const r of DEFAULT_REQUESTS) {
+      insertReq.run(
+        r.id,
+        r.itemName,
+        r.brandOrSize,
+        r.category,
+        r.requestedByName,
+        r.baseUpvotes,
+        nowIso
+      );
     }
   }
 
@@ -314,33 +374,45 @@ export function seedDatabase(
         email: 'tom.hughes@student.bham.ac.uk',
         name: 'Tom Hughes',
         items: [
-          { productId: 'prod-basmati-5kg', quantity: 1 }, // -> Basmati 3/4 (10% Closer Bonus!)
-          { productId: 'prod-shin-ramyun-5pk', quantity: 3 }, // -> Shin Ramyun 1 locked + 2/4 open
-          { productId: 'prod-monster-ultra-6pk', quantity: 2 }, // -> Monster 2/4 (6% Closer Bonus!)
+          { productId: 'prod-basmati-5kg', quantity: 1 },
+          { productId: 'prod-shin-ramyun-5pk', quantity: 3 },
+          { productId: 'prod-monster-ultra-6pk', quantity: 2 },
         ],
       },
       {
         email: 'zara.khan@student.bham.ac.uk',
         name: 'Zara Khan',
         items: [
-          { productId: 'prod-kikkoman-soy-500ml', quantity: 3 }, // -> Kikkoman 5/6 (10% Closer Bonus!)
-          { productId: 'prod-fresh-protein-bagels', quantity: 1 }, // -> 1/4 on 2w fresh bakery -> AUTO_REFUND demo!
+          { productId: 'prod-kikkoman-soy-500ml', quantity: 3 },
+          { productId: 'prod-fresh-protein-bagels', quantity: 1 },
         ],
       },
     ];
 
-    const insertUser = db.prepare(
-      'INSERT INTO users (id, email, name, role, created_at) VALUES (?, ?, ?, ?, ?)'
-    );
+    const insertUser = db.prepare(`
+      INSERT INTO users (
+        id, email, name, role, referral_code, credit_balance_pence, created_at
+      ) VALUES (?, ?, ?, ?, ?, 0, ?)
+    `);
 
     for (const demo of demoStudents) {
       const userId = `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-      insertUser.run(userId, demo.email, demo.name, 'student', new Date().toISOString());
+      const refCode = generateUniqueReferralCode(db);
+      insertUser.run(
+        userId,
+        demo.email,
+        demo.name,
+        'student',
+        refCode,
+        new Date().toISOString()
+      );
       const user: AuthUser = {
         id: userId,
         email: demo.email,
         name: demo.name,
         role: 'student',
+        referralCode: refCode,
+        creditBalancePence: 0,
       };
       const pending = createPendingOrder(db, user, demo.items, 'test_simulated');
       confirmOrderPayment(db, pending.orderId);

@@ -72,6 +72,8 @@ export interface AuthUser {
   email: string;
   name: string;
   role: 'student' | 'admin';
+  referralCode?: string;
+  creditBalancePence?: number;
 }
 
 export interface OrderItemAllocation {
@@ -103,6 +105,7 @@ export interface Order {
   netChargedPence: number;
   totalAldiComparisonPence: number;
   closerDiscountTotalPence?: number;
+  creditAppliedPence?: number;
   pickupCode: string;
   pickupPin: string;
   qrToken: string;
@@ -189,6 +192,18 @@ export interface WholesalePurchaseOrder {
   }>;
 }
 
+export interface ProductRequest {
+  id: string;
+  itemName: string;
+  brandOrSize: string;
+  category: string;
+  requestedByName: string;
+  upvotesCount: number;
+  viewerHasVoted: boolean;
+  status: 'open' | 'stocked';
+  createdAt: string;
+}
+
 export interface AdminSummary {
   settings: DropSettings;
   products: ProductWithPool[];
@@ -196,6 +211,7 @@ export interface AdminSummary {
   buyAheadPredictions: BuyAheadPrediction[];
   wholesaleOrders: WholesalePurchaseOrder[];
   wholesaleApiConfigured: boolean;
+  productRequests?: ProductRequest[];
   orders: Order[];
   totals: {
     totalOrdersCount: number;
@@ -219,6 +235,7 @@ export interface CreateCheckoutResponse {
   totalPaidPence: number;
   subtotalPence: number;
   feePence: number;
+  creditAppliedPence?: number;
 }
 
 export interface ScanLookupResult {

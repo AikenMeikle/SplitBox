@@ -8,6 +8,7 @@ import {
   runImmediateTransaction,
 } from '../db.ts';
 import { computeBuyAheadPredictions } from './buyAheadPredictor.ts';
+import { listProductRequests } from './productRequests.ts';
 import { isStripeConfigured, issueStripeRefund } from './stripeService.ts';
 import { getWholesaleOrders, isWholesaleApiConfigured } from './wholesaleApi.ts';
 
@@ -18,12 +19,11 @@ interface PendingStripeRefund {
 }
 
 /**
- * Settles a specific drop cycle inside a single SQLite transaction:
- *  - Optional `buyAheadProductIds`: underwrites selected incomplete shelf-stable open
- *    boxes (`pooling -> fulfilled`) and adds leftover unsold units to `carryover_stock_slots`!
- *  - Every `locked_box` share becomes `fulfilled`.
- *  - Remaining unfilled `pooling` shares become `auto_refunded`.
- *  - Enforces `totalPaidPence === netChargedPence + refundedPence` on every order.
+ * Settles a drop cycle atomically:
+ *  - Underwrites any founder-selected `buyAheadProductIds` (`pooling -> fulfilled`, leftover -> `carryover_stock_slots`).
+ *  - Promotes `locked_box -> fulfilled` and marks remaining `pooling -> auto_refunded`.
+ *  - Refunds cash up to `totalPaidPence` AND restores any unspent `creditAppliedPence` back to `users.credit_balance_pence`!
+ *  - Strictly preserves `totalPaidPence === netChargedPence + refundedPence`.
  */
 function settleDropCycleInTx(
   db: DatabaseSync,
@@ -34,7 +34,6 @@ function settleDropCycleInTx(
     "DELETE FROM orders WHERE drop_cycle_number = ? AND status = 'pending_payment'"
   ).run(cycleNumber);
 
-  // 1. Underwritefounder-approved incomplete open boxes (Buy-Ahead Rollover)
   const uniqueBuyAheadIds = Array.from(new Set(buyAheadProductIds));
   for (const productId of uniqueBuyAheadIds) {
     const prod = db
@@ -62,7 +61,6 @@ function settleDropCycleInTx(
     }
   }
 
-  // 2. Promote 100% locked boxes -> fulfilled; mark remaining incomplete boxes -> auto_refunded
   db.prepare(
     "UPDATE pool_allocations SET status = 'fulfilled' WHERE drop_cycle_number = ? AND status = 'locked_box'"
   ).run(cycleNumber);
@@ -77,16 +75,24 @@ function settleDropCycleInTx(
     .all(cycleNumber) as Array<Record<string, unknown>>;
 
   const allocStmt = db.prepare('SELECT * FROM pool_allocations WHERE order_id = ?');
-  const updateOrderStmt = db.prepare(
-    'UPDATE orders SET status = ?, refunded_pence = ?, net_charged_pence = ? WHERE id = ?'
+  const updateOrderStmt = db.prepare(`
+    UPDATE orders
+    SET status = ?, refunded_pence = ?, net_charged_pence = ?, credit_restored_pence = ?
+    WHERE id = ?
+  `);
+  const restoreCreditStmt = db.prepare(
+    'UPDATE users SET credit_balance_pence = credit_balance_pence + ? WHERE id = ?'
   );
 
   const stripeRefunds: PendingStripeRefund[] = [];
 
   for (const row of orderRows) {
     const orderId = String(row.id);
+    const userId = String(row.user_id);
     const totalPaidPence = Number(row.total_paid_pence);
+    const creditAppliedPence = Number(row.credit_applied_pence || 0);
     const prevRefundedPence = Number(row.refunded_pence);
+    const prevCreditRestoredPence = Number(row.credit_restored_pence || 0);
     const currentStatus = String(row.status);
 
     const allocs = allocStmt.all(orderId) as Array<Record<string, unknown>>;
@@ -104,15 +110,20 @@ function settleDropCycleInTx(
 
     let refundedPence = 0;
     let netChargedPence = 0;
+    let creditRestoredPence = 0;
     let nextStatus = currentStatus;
 
     if (fulfilledCount === 0) {
+      // Zero items fulfilled -> refund 100% cash paid AND restore 100% applied wallet credit!
       refundedPence = totalPaidPence;
       netChargedPence = 0;
+      creditRestoredPence = creditAppliedPence;
       nextStatus = 'refunded';
     } else {
-      refundedPence = autoRefundedSharesPence;
+      // Refund cash up to `totalPaidPence`; restore any remaining auto-refund value to wallet credit!
+      refundedPence = Math.min(totalPaidPence, autoRefundedSharesPence);
       netChargedPence = totalPaidPence - refundedPence;
+      creditRestoredPence = Math.max(0, autoRefundedSharesPence - refundedPence);
       nextStatus = currentStatus === 'collected' ? 'collected' : 'settled';
     }
 
@@ -123,7 +134,18 @@ function settleDropCycleInTx(
       );
     }
 
-    updateOrderStmt.run(nextStatus, refundedPence, netChargedPence, orderId);
+    const deltaCreditRestore = creditRestoredPence - prevCreditRestoredPence;
+    if (deltaCreditRestore > 0) {
+      restoreCreditStmt.run(deltaCreditRestore, userId);
+    }
+
+    updateOrderStmt.run(
+      nextStatus,
+      refundedPence,
+      netChargedPence,
+      creditRestoredPence,
+      orderId
+    );
 
     const deltaRefundPence = refundedPence - prevRefundedPence;
     if (
@@ -143,7 +165,6 @@ function settleDropCycleInTx(
   return stripeRefunds;
 }
 
-/** Closes the active weekly drop, underwrites any chosen buy-ahead boxes, and settles refunds. */
 export async function runWeeklyCutoff(
   db: DatabaseSync,
   options?: { buyAheadProductIds?: string[] }
@@ -163,7 +184,6 @@ export async function runWeeklyCutoff(
   return getAdminSummary(db);
 }
 
-/** Starts the next weekly drop cycle while preserving historical orders and hub carryover stock. */
 export async function startNewDropCycle(db: DatabaseSync): Promise<AdminSummary> {
   const stripeRefunds = runImmediateTransaction(db, () => {
     const settings = getSettings(db);
@@ -198,6 +218,7 @@ export function getAdminSummary(db: DatabaseSync): AdminSummary {
   const buyAheadPredictions = computeBuyAheadPredictions(db);
   const wholesaleOrders = getWholesaleOrders(db);
   const wholesaleApiConfigured = isWholesaleApiConfigured();
+  const productRequests = listProductRequests(db, null);
 
   const productAllocRows = db
     .prepare(`
@@ -298,6 +319,7 @@ export function getAdminSummary(db: DatabaseSync): AdminSummary {
     buyAheadPredictions,
     wholesaleOrders,
     wholesaleApiConfigured,
+    productRequests,
     orders,
     totals: {
       totalOrdersCount: cycleOrderRows.length,

@@ -23,20 +23,23 @@ export interface PendingCheckoutData {
   orderId: string;
   subtotalPence: number;
   feePence: number;
+  creditAppliedPence: number;
   totalPaidPence: number;
   closerDiscountTotalPence: number;
+  paymentMode: 'stripe_live' | 'test_simulated';
   lineItems: ValidatedLineItem[];
 }
 
 /**
- * Validates basket items, applies Almost-Full Closer Discounts (`effectiveSharePricePence`)
- * and fee waivers (`waivesSmallOrderFee`), and records a `pending_payment` order.
+ * Validates basket items, applies Almost-Full Closer Discounts + fee waivers,
+ * applies available `users.credit_balance_pence` wallet credit, and inserts a
+ * `pending_payment` order row.
  */
 export function createPendingOrder(
   db: DatabaseSync,
   user: AuthUser,
   rawItems: Array<{ productId: string; quantity: number }>,
-  paymentMode: 'stripe_live' | 'test_simulated'
+  preferredPaymentMode: 'stripe_live' | 'test_simulated'
 ): PendingCheckoutData {
   const settings = getSettings(db);
   if (settings.dropStatus !== 'open') {
@@ -97,7 +100,7 @@ export function createPendingOrder(
     anyWaivesSmallOrderFee || subtotalPence >= settings.freeDeliveryThresholdPence
       ? 0
       : settings.smallOrderFeePence;
-  const totalPaidPence = subtotalPence + feePence;
+  const grossOrderPence = subtotalPence + feePence;
 
   const orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const persistedItems = lineItems.map((li) => ({
@@ -106,11 +109,25 @@ export function createPendingOrder(
     unitPricePence: li.sharePricePence,
   }));
 
+  let creditAppliedPence = 0;
+  let totalPaidPence = grossOrderPence;
+  let finalPaymentMode: 'stripe_live' | 'test_simulated' = preferredPaymentMode;
+
   runImmediateTransaction(db, () => {
     const freshSettings = getSettings(db);
     if (freshSettings.dropStatus !== 'open') {
       throw new HttpError(400, 'This weekly drop has just closed.');
     }
+
+    const userRow = db
+      .prepare('SELECT credit_balance_pence FROM users WHERE id = ?')
+      .get(user.id) as { credit_balance_pence: number } | undefined;
+    const availableCredit = Math.max(0, Number(userRow?.credit_balance_pence || 0));
+
+    creditAppliedPence = Math.min(availableCredit, grossOrderPence);
+    totalPaidPence = grossOrderPence - creditAppliedPence;
+    // £0.00 wallet-covered checkouts settle directly without Stripe redirect
+    finalPaymentMode = totalPaidPence === 0 ? 'test_simulated' : preferredPaymentMode;
 
     const pickupCode = generateUniquePickupCode(db);
     const pickupPin = generateUniquePickupPin(db);
@@ -122,8 +139,9 @@ export function createPendingOrder(
         id, drop_cycle_number, user_id, user_email, user_name, status,
         items_json, subtotal_pence, fee_pence, total_paid_pence,
         refunded_pence, net_charged_pence, total_aldi_comparison_pence,
-        closer_discount_total_pence, pickup_code, pickup_pin, qr_token, payment_mode, created_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+        closer_discount_total_pence, credit_applied_pence, credit_restored_pence,
+        pickup_code, pickup_pin, qr_token, payment_mode, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending_payment', ?, ?, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
     `).run(
       orderId,
       freshSettings.dropCycleNumber,
@@ -137,10 +155,11 @@ export function createPendingOrder(
       totalPaidPence,
       totalAldiComparisonPence,
       closerDiscountTotalPence,
+      creditAppliedPence,
       pickupCode,
       pickupPin,
       qrToken,
-      paymentMode,
+      finalPaymentMode,
       nowIso
     );
   });
@@ -149,8 +168,10 @@ export function createPendingOrder(
     orderId,
     subtotalPence,
     feePence,
+    creditAppliedPence,
     totalPaidPence,
     closerDiscountTotalPence,
+    paymentMode: finalPaymentMode,
     lineItems,
   };
 }
@@ -164,11 +185,8 @@ export function attachStripeSessionToOrder(
 }
 
 /**
- * Atomically confirms payment and allocates sequential pool slots inside `BEGIN IMMEDIATE`.
- *  - If hub carryover stock (`carryover_stock_slots > 0`) exists from a previous week's
- *    underwritten case, fulfills from hub stock first (`box_number = 0`, `locked_box` immediately).
- *  - Otherwise allocates sequential `global_slot_index = 0, 1, 2...` and promotes all
- *    slots in `box_number` to `'locked_box'` the instant `slot_in_box === caseSize`!
+ * Atomically confirms payment, deducts any applied wallet credit, allocates sequential
+ * pool slots, and awards the £1.00 (`100p`) referrer bonus on a referred friend's first order!
  */
 export function confirmOrderPayment(
   db: DatabaseSync,
@@ -198,6 +216,21 @@ export function confirmOrderPayment(
     const dropCycleNumber = Number(orderRow.drop_cycle_number);
     if (settings.dropStatus !== 'open' || settings.dropCycleNumber !== dropCycleNumber) {
       throw new HttpError(409, 'This drop cycle is already closed and cannot accept new shares.');
+    }
+
+    const userId = String(orderRow.user_id);
+    const creditAppliedPence = Math.max(0, Number(orderRow.credit_applied_pence || 0));
+
+    if (creditAppliedPence > 0) {
+      const uRow = db
+        .prepare('SELECT credit_balance_pence FROM users WHERE id = ?')
+        .get(userId) as { credit_balance_pence: number } | undefined;
+      if (!uRow || Number(uRow.credit_balance_pence) < creditAppliedPence) {
+        throw new HttpError(409, 'Wallet credit was already spent on another order.');
+      }
+      db.prepare(
+        'UPDATE users SET credit_balance_pence = credit_balance_pence - ? WHERE id = ?'
+      ).run(creditAppliedPence, userId);
     }
 
     const items = JSON.parse(String(orderRow.items_json)) as Array<{
@@ -235,7 +268,6 @@ export function confirmOrderPayment(
     `);
 
     const nowIso = new Date().toISOString();
-    const userId = String(orderRow.user_id);
 
     for (const item of items) {
       const product = getProductStmt.get(item.productId) as Record<string, unknown> | undefined;
@@ -264,7 +296,6 @@ export function confirmOrderPayment(
         const allocId = `alc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
         if (availableCarryover > 0) {
-          // Allocate immediately from hub-held carryover stock!
           availableCarryover--;
           decrementCarryoverStmt.run(item.productId);
           insertAllocStmt.run(
@@ -325,6 +356,22 @@ export function confirmOrderPayment(
           stripe_payment_intent_id = COALESCE(?, stripe_payment_intent_id)
       WHERE id = ?
     `).run(options?.stripePaymentIntentId ?? null, orderId);
+
+    // Award £1.00 (100p) credit to the referrer upon the referred friend's first confirmed order!
+    const refState = db
+      .prepare('SELECT referred_by_user_id, referral_rewarded FROM users WHERE id = ?')
+      .get(userId) as { referred_by_user_id: string | null; referral_rewarded: number } | undefined;
+
+    if (refState?.referred_by_user_id && Number(refState.referral_rewarded) === 0) {
+      const markRes = db
+        .prepare('UPDATE users SET referral_rewarded = 1 WHERE id = ? AND referral_rewarded = 0')
+        .run(userId);
+      if (Number(markRes.changes) === 1) {
+        db.prepare(
+          'UPDATE users SET credit_balance_pence = credit_balance_pence + 100 WHERE id = ?'
+        ).run(String(refState.referred_by_user_id));
+      }
+    }
 
     const confirmed = getOrderById(db, orderId);
     if (!confirmed) throw new HttpError(500, 'Failed to load confirmed order.');

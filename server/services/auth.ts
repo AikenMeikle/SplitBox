@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { AuthUser } from '../../src/shared/types.ts';
-import { HttpError } from '../db.ts';
+import { generateUniqueReferralCode, HttpError, runImmediateTransaction } from '../db.ts';
 
 const ALLOWED_CAMPUS_DOMAINS = ['@student.bham.ac.uk', '@bham.ac.uk'];
 
@@ -15,11 +15,12 @@ function getOtpSecret(): string {
 
 function getAdminEmailSet(): Set<string> {
   const raw = process.env.ADMIN_EMAILS || '';
-  const items = raw
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return new Set(items);
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
 }
 
 function hashOtp(email: string, code: string): string {
@@ -44,13 +45,24 @@ function deriveNameFromEmail(email: string): string {
 
 export function isAllowedCampusEmail(rawEmail: string): boolean {
   const email = rawEmail.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return false;
-  }
-  if (getAdminEmailSet().has(email)) {
-    return true;
-  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+  if (getAdminEmailSet().has(email)) return true;
   return ALLOWED_CAMPUS_DOMAINS.some((domain) => email.endsWith(domain));
+}
+
+function getUserById(db: DatabaseSync, userId: string): AuthUser {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) throw new HttpError(404, 'User not found.');
+  return {
+    id: String(row.id),
+    email: String(row.email),
+    name: String(row.name),
+    role: String(row.role) as 'student' | 'admin',
+    referralCode: String(row.referral_code || ''),
+    creditBalancePence: Number(row.credit_balance_pence || 0),
+  };
 }
 
 function upsertUser(
@@ -67,33 +79,66 @@ function upsertUser(
   if (existing) {
     const nextRole = role === 'admin' || existing.role === 'admin' ? 'admin' : 'student';
     const nextName = preferredName?.trim() || String(existing.name);
-    if (nextRole !== existing.role || nextName !== existing.name) {
-      db.prepare('UPDATE users SET name = ?, role = ? WHERE id = ?').run(
-        nextName,
-        nextRole,
-        String(existing.id)
-      );
-    }
-    return {
-      id: String(existing.id),
-      email: normalizedEmail,
-      name: nextName,
-      role: nextRole,
-    };
+    const refCode =
+      String(existing.referral_code || '').trim() || generateUniqueReferralCode(db);
+    db.prepare('UPDATE users SET name = ?, role = ?, referral_code = ? WHERE id = ?').run(
+      nextName,
+      nextRole,
+      refCode,
+      String(existing.id)
+    );
+    return getUserById(db, String(existing.id));
   }
 
   const id = `usr_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const finalName = preferredName?.trim() || deriveNameFromEmail(normalizedEmail);
-  db.prepare(
-    'INSERT INTO users (id, email, name, role, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, normalizedEmail, finalName, role, new Date().toISOString());
+  const referralCode = generateUniqueReferralCode(db);
+  db.prepare(`
+    INSERT INTO users (
+      id, email, name, role, referral_code, credit_balance_pence, created_at
+    ) VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(id, normalizedEmail, finalName, role, referralCode, new Date().toISOString());
 
-  return {
-    id,
-    email: normalizedEmail,
-    name: finalName,
-    role,
-  };
+  return getUserById(db, id);
+}
+
+/**
+ * Links a hallmate's `UOB-XXXXXX` referral code to a first-time student account
+ * and awards an instant 50p (£0.50) welcome wallet credit!
+ */
+function applyReferralBonusIfEligible(
+  db: DatabaseSync,
+  userId: string,
+  rawReferralCode?: string
+): void {
+  const code = (rawReferralCode || '').trim().toUpperCase();
+  if (!code) return;
+
+  runImmediateTransaction(db, () => {
+    const referrer = db
+      .prepare('SELECT id FROM users WHERE UPPER(referral_code) = ?')
+      .get(code) as { id: string } | undefined;
+    if (!referrer || referrer.id === userId) return;
+
+    const current = db
+      .prepare('SELECT referred_by_user_id FROM users WHERE id = ?')
+      .get(userId) as { referred_by_user_id: string | null } | undefined;
+    if (!current || current.referred_by_user_id) return;
+
+    const orderCountRow = db
+      .prepare(
+        "SELECT COUNT(*) AS cnt FROM orders WHERE user_id = ? AND status != 'pending_payment'"
+      )
+      .get(userId) as { cnt: number };
+    if (Number(orderCountRow.cnt) > 0) return;
+
+    db.prepare(`
+      UPDATE users
+      SET referred_by_user_id = ?,
+          credit_balance_pence = credit_balance_pence + 50
+      WHERE id = ? AND referred_by_user_id IS NULL
+    `).run(referrer.id, userId);
+  });
 }
 
 function issueSession(db: DatabaseSync, userId: string): string {
@@ -109,10 +154,6 @@ function issueSession(db: DatabaseSync, userId: string): string {
   return rawToken;
 }
 
-/**
- * Generates a 6-digit OTP for a valid `@student.bham.ac.uk` / `@bham.ac.uk` address.
- * Sends via Resend API when `RESEND_API_KEY` is configured; returns `devOtpCode` in dev mode.
- */
 export async function requestOtp(
   db: DatabaseSync,
   rawEmail: string,
@@ -174,12 +215,12 @@ export async function requestOtp(
   };
 }
 
-/** Verifies a 6-digit OTP in constant time and returns a 30-day session token. */
 export function verifyOtp(
   db: DatabaseSync,
   rawEmail: string,
   rawCode: string,
-  rawName?: string
+  rawName?: string,
+  referralCode?: string
 ): { token: string; user: AuthUser } {
   const email = (rawEmail || '').trim().toLowerCase();
   const code = (rawCode || '').trim();
@@ -215,13 +256,14 @@ export function verifyOtp(
   db.prepare('UPDATE otp_codes SET used = 1 WHERE id = ?').run(String(row.id));
 
   const role = getAdminEmailSet().has(email) ? 'admin' : 'student';
-  const user = upsertUser(db, email, rawName, role);
-  const token = issueSession(db, user.id);
+  const baseUser = upsertUser(db, email, rawName, role);
+  applyReferralBonusIfEligible(db, baseUser.id, referralCode);
+  const freshUser = getUserById(db, baseUser.id);
+  const token = issueSession(db, freshUser.id);
 
-  return { token, user };
+  return { token, user: freshUser };
 }
 
-/** Authenticates the drop founder/admin using `ADMIN_PIN` (default `uob-admin-2026`). */
 export function adminLogin(
   db: DatabaseSync,
   rawPin: string,
@@ -242,11 +284,11 @@ export function adminLogin(
   return { token, user };
 }
 
-/** 1-click developer/QA login enabled only when `isDevMode()` is true. */
 export function devLogin(
   db: DatabaseSync,
   role: 'student' | 'admin',
-  persona?: string
+  persona?: string,
+  referralCode?: string
 ): { token: string; user: AuthUser } {
   if (!isDevMode()) {
     throw new HttpError(403, 'Developer login is disabled in production.');
@@ -263,11 +305,13 @@ export function devLogin(
     .replace(/[^a-z0-9._-]/g, '');
   const email = `${cleanSlug || 'maya.patel'}@student.bham.ac.uk`;
   const displayName = persona ? deriveNameFromEmail(email) : 'Maya Patel';
-  const user = upsertUser(db, email, displayName, 'student');
-  return { token: issueSession(db, user.id), user };
+  const baseUser = upsertUser(db, email, displayName, 'student');
+  applyReferralBonusIfEligible(db, baseUser.id, referralCode);
+  const freshUser = getUserById(db, baseUser.id);
+
+  return { token: issueSession(db, freshUser.id), user: freshUser };
 }
 
-/** Resolves the authenticated `AuthUser` from an `Authorization: Bearer <token>` header. */
 export function getUserFromAuthHeader(
   db: DatabaseSync,
   authHeader?: string
@@ -281,7 +325,7 @@ export function getUserFromAuthHeader(
   const tokenHash = hashSessionToken(rawToken);
   const row = db
     .prepare(`
-      SELECT u.id, u.email, u.name, u.role, s.expires_at
+      SELECT u.id, u.email, u.name, u.role, u.referral_code, u.credit_balance_pence, s.expires_at
       FROM sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ?
@@ -299,6 +343,8 @@ export function getUserFromAuthHeader(
     email: String(row.email),
     name: String(row.name),
     role: String(row.role) as 'student' | 'admin',
+    referralCode: String(row.referral_code || ''),
+    creditBalancePence: Number(row.credit_balance_pence || 0),
   };
 }
 

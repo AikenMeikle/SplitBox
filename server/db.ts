@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,16 +12,30 @@ import type {
   ProductWithPool,
 } from '../src/shared/types.ts';
 
-/**
- * Custom HTTP-friendly error so services can specify clean 400/401/403/404/409
- * status codes that Express converts directly into `{ error: message }` JSON.
- */
 export class HttpError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
   }
+}
+
+const REF_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+/** Generates a unique `UOB-XXXXXX` campus referral code for a student account. */
+export function generateUniqueReferralCode(db: DatabaseSync): string {
+  const checkStmt = db.prepare('SELECT 1 FROM users WHERE UPPER(referral_code) = UPPER(?)');
+  for (let attempt = 0; attempt < 100; attempt++) {
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      suffix += REF_ALPHABET[crypto.randomInt(0, REF_ALPHABET.length)];
+    }
+    const candidate = `UOB-${suffix}`;
+    if (!checkStmt.get(candidate)) {
+      return candidate;
+    }
+  }
+  return `UOB-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
 export function openDatabase(customPath?: string): DatabaseSync {
@@ -50,7 +65,8 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
 }
 
 /**
- * Creates all tables and auto-migrates additive columns on existing SQLite files.
+ * Creates all tables, runs additive column migrations, cleans legacy "Aldi" strings
+ * out of student-facing unit labels, and backfills `referral_code` on existing users.
  */
 export function initSchema(db: DatabaseSync): void {
   db.exec(`
@@ -96,6 +112,10 @@ export function initSchema(db: DatabaseSync): void {
       email TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('student', 'admin')),
+      referral_code TEXT NOT NULL DEFAULT '',
+      credit_balance_pence INTEGER NOT NULL DEFAULT 0,
+      referred_by_user_id TEXT,
+      referral_rewarded INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
 
@@ -130,6 +150,8 @@ export function initSchema(db: DatabaseSync): void {
       net_charged_pence INTEGER NOT NULL,
       total_aldi_comparison_pence INTEGER NOT NULL,
       closer_discount_total_pence INTEGER NOT NULL DEFAULT 0,
+      credit_applied_pence INTEGER NOT NULL DEFAULT 0,
+      credit_restored_pence INTEGER NOT NULL DEFAULT 0,
       pickup_code TEXT NOT NULL UNIQUE,
       pickup_pin TEXT NOT NULL UNIQUE,
       qr_token TEXT NOT NULL,
@@ -174,6 +196,25 @@ export function initSchema(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS product_requests (
+      id TEXT PRIMARY KEY,
+      item_name TEXT NOT NULL,
+      brand_or_size TEXT NOT NULL,
+      category TEXT NOT NULL,
+      requested_by_user_id TEXT,
+      requested_by_name TEXT NOT NULL,
+      base_upvotes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'stocked')),
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS product_request_votes (
+      request_id TEXT NOT NULL REFERENCES product_requests(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (request_id, user_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_allocations_cycle_product_box
       ON pool_allocations(drop_cycle_number, product_id, box_number);
     CREATE INDEX IF NOT EXISTS idx_allocations_order
@@ -184,13 +225,58 @@ export function initSchema(db: DatabaseSync): void {
       ON orders(drop_cycle_number, created_at DESC);
   `);
 
-  // Safe migrations for existing `data/divly.sqlite` databases
+  // Safe additive column migrations for existing databases
   ensureColumn(db, 'products', 'ean_barcode', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'products', 'supplier_sku', "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, 'products', 'supplier_name', "TEXT NOT NULL DEFAULT 'Qogita / Booker UK'");
   ensureColumn(db, 'products', 'shelf_life_weeks', 'INTEGER NOT NULL DEFAULT 26');
   ensureColumn(db, 'products', 'carryover_stock_slots', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'users', 'referral_code', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, 'users', 'credit_balance_pence', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'users', 'referred_by_user_id', 'TEXT');
+  ensureColumn(db, 'users', 'referral_rewarded', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'orders', 'closer_discount_total_pence', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'orders', 'credit_applied_pence', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'orders', 'credit_restored_pence', 'INTEGER NOT NULL DEFAULT 0');
+
+  // Scrub any legacy "Aldi" references from student-visible product unit labels
+  db.exec(`
+    UPDATE products
+    SET aldi_unit_label = TRIM(
+      REPLACE(
+        REPLACE(
+          REPLACE(
+            REPLACE(aldi_unit_label, 'Aldi Saxon ', ''),
+            'equiv. at Aldi',
+            'Supermarket equiv.'
+          ),
+          'at Aldi',
+          'in supermarkets'
+        ),
+        'Aldi ',
+        'Supermarket '
+      )
+    )
+    WHERE LOWER(aldi_unit_label) LIKE '%aldi%';
+
+    UPDATE products
+    SET aldi_unit_label = 'Supermarket equiv.'
+    WHERE LOWER(aldi_unit_label) LIKE '%aldi%';
+  `);
+
+  // Backfill unique `UOB-XXXXXX` referral codes on any existing users
+  const missingRefUsers = db
+    .prepare("SELECT id FROM users WHERE referral_code IS NULL OR referral_code = ''")
+    .all() as Array<{ id: string }>;
+  if (missingRefUsers.length > 0) {
+    const setRefStmt = db.prepare('UPDATE users SET referral_code = ? WHERE id = ?');
+    for (const u of missingRefUsers) {
+      setRefStmt.run(generateUniqueReferralCode(db), u.id);
+    }
+  }
+  db.exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code) WHERE referral_code != ''"
+  );
 }
 
 export function runImmediateTransaction<T>(db: DatabaseSync, fn: () => T): T {
@@ -286,10 +372,6 @@ export function getProductWithPoolById(
   return row ? mapProductWithPoolRow(row, settings.dropStatus) : null;
 }
 
-/**
- * Maps a product row + live pool aggregates, including the Herd / Almost-Full
- * Closer Bonus (6%–10% extra discount + small-order fee waiver when >=50% full or <=2 spots left).
- */
 function mapProductWithPoolRow(
   row: Record<string, unknown>,
   dropStatus: DropStatus
@@ -312,7 +394,6 @@ function mapProductWithPoolRow(
       ? Math.max(0, Math.round(((aldiPricePence - sharePricePence) / aldiPricePence) * 100))
       : 0;
 
-  // Herd / Almost-Full Closer Incentive
   const fillRatio = Number((openCaseClaimedSlots / caseSize).toFixed(4));
   const isAlmostFull =
     dropStatus === 'open' &&
@@ -433,6 +514,7 @@ export function hydrateOrders(
     netChargedPence: Number(r.net_charged_pence),
     totalAldiComparisonPence: Number(r.total_aldi_comparison_pence),
     closerDiscountTotalPence: Number(r.closer_discount_total_pence || 0),
+    creditAppliedPence: Number(r.credit_applied_pence || 0),
     pickupCode: String(r.pickup_code),
     pickupPin: String(r.pickup_pin),
     qrToken: String(r.qr_token),

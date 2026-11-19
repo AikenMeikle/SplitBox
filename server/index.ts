@@ -36,6 +36,13 @@ import {
   confirmOrderPayment,
   createPendingOrder,
 } from './services/poolAllocator.ts';
+import {
+  buildDatabaseBackupPayload,
+  createProductRequest,
+  listProductRequests,
+  toggleProductRequestVote,
+  updateProductRequestStatus,
+} from './services/productRequests.ts';
 import { collectOrder, verifyScanInput } from './services/qrPass.ts';
 import { SseHub } from './services/realtime.ts';
 import { getAdminSummary, runWeeklyCutoff, startNewDropCycle } from './services/settlement.ts';
@@ -93,7 +100,7 @@ export function createApp(db: DatabaseSync): express.Express {
     return user;
   }
 
-  // --- Storefront State & Real-Time SSE ---
+  // --- Storefront State, Item Request Board & Real-Time SSE ---
 
   app.get('/api/state', (_req, res) => {
     res.json({
@@ -106,7 +113,30 @@ export function createApp(db: DatabaseSync): express.Express {
 
   app.get('/api/events', (req, res) => sseHub.subscribe(req, res));
 
-  // --- Student OTP & Admin Authentication ---
+  app.get('/api/requests', (req, res) => {
+    const viewer = getUserFromAuthHeader(db, req.headers.authorization);
+    res.json({ requests: listProductRequests(db, viewer?.id) });
+  });
+
+  app.post('/api/requests', (req, res) => {
+    const user = requireUser(req);
+    const created = createProductRequest(
+      db,
+      user,
+      (req.body ?? {}) as { itemName?: string; brandOrSize?: string; category?: string }
+    );
+    sseHub.broadcast('requests_updated');
+    res.status(201).json({ request: created });
+  });
+
+  app.post('/api/requests/:id/vote', (req, res) => {
+    const user = requireUser(req);
+    const updated = toggleProductRequestVote(db, String(req.params.id), user);
+    sseHub.broadcast('requests_updated');
+    res.json({ request: updated });
+  });
+
+  // --- Student OTP, Viral Referral & Admin Authentication ---
 
   app.get('/api/auth/me', (req, res) => {
     res.json({ user: getUserFromAuthHeader(db, req.headers.authorization) });
@@ -118,8 +148,11 @@ export function createApp(db: DatabaseSync): express.Express {
   });
 
   app.post('/api/auth/verify-otp', (req, res) => {
-    const { email, code, name } = (req.body ?? {}) as Record<string, string | undefined>;
-    res.json(verifyOtp(db, String(email ?? ''), String(code ?? ''), name));
+    const { email, code, name, referralCode } = (req.body ?? {}) as Record<
+      string,
+      string | undefined
+    >;
+    res.json(verifyOtp(db, String(email ?? ''), String(code ?? ''), name, referralCode));
   });
 
   app.post('/api/auth/admin-login', (req, res) => {
@@ -128,8 +161,12 @@ export function createApp(db: DatabaseSync): express.Express {
   });
 
   app.post('/api/auth/dev-login', (req, res) => {
-    const { role, persona } = (req.body ?? {}) as { role?: 'student' | 'admin'; persona?: string };
-    res.json(devLogin(db, role === 'admin' ? 'admin' : 'student', persona));
+    const { role, persona, referralCode } = (req.body ?? {}) as {
+      role?: 'student' | 'admin';
+      persona?: string;
+      referralCode?: string;
+    };
+    res.json(devLogin(db, role === 'admin' ? 'admin' : 'student', persona, referralCode));
   });
 
   app.post('/api/auth/logout', (req, res) => {
@@ -158,14 +195,28 @@ export function createApp(db: DatabaseSync): express.Express {
       stripeActive ? 'stripe_live' : 'test_simulated'
     );
 
-    if (stripeActive) {
+    if (pending.paymentMode === 'stripe_live') {
       const baseUrl =
         process.env.PUBLIC_BASE_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+      const stripeLineItems =
+        pending.creditAppliedPence > 0
+          ? [
+              {
+                productId: 'divly-net-basket',
+                productName: 'Divly Campus Bulk Shares (after Wallet Credit)',
+                unitDescription: `Includes £${(pending.creditAppliedPence / 100).toFixed(2)} wallet credit`,
+                sharePricePence: pending.totalPaidPence,
+                aldiPricePence: pending.totalPaidPence,
+                quantity: 1,
+              },
+            ]
+          : pending.lineItems;
+
       const session = await createStripeCheckoutSession({
         orderId: pending.orderId,
         userEmail: user.email,
-        lineItems: pending.lineItems,
-        feePence: pending.feePence,
+        lineItems: stripeLineItems,
+        feePence: pending.creditAppliedPence > 0 ? 0 : pending.feePence,
         baseUrl,
       });
       attachStripeSessionToOrder(db, pending.orderId, session.sessionId);
@@ -176,6 +227,7 @@ export function createApp(db: DatabaseSync): express.Express {
         totalPaidPence: pending.totalPaidPence,
         subtotalPence: pending.subtotalPence,
         feePence: pending.feePence,
+        creditAppliedPence: pending.creditAppliedPence,
       };
       res.json(response);
       return;
@@ -187,6 +239,7 @@ export function createApp(db: DatabaseSync): express.Express {
       totalPaidPence: pending.totalPaidPence,
       subtotalPence: pending.subtotalPence,
       feePence: pending.feePence,
+      creditAppliedPence: pending.creditAppliedPence,
     };
     res.json(response);
   });
@@ -236,11 +289,34 @@ export function createApp(db: DatabaseSync): express.Express {
     res.json({ order });
   });
 
-  // --- Admin Dashboard, Buy-Ahead Cutoff, Live Wholesale API & Scanner ---
+  // --- Admin Dashboard, Buy-Ahead Cutoff, Live Wholesale API, Backup & Scanner ---
 
   app.get('/api/admin/summary', (req, res) => {
     requireAdmin(req);
     res.json(getAdminSummary(db));
+  });
+
+  app.get('/api/admin/backup', (req, res) => {
+    requireAdmin(req);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="divly-backup-${dateStamp}.json"`
+    );
+    res.send(JSON.stringify(buildDatabaseBackupPayload(db), null, 2));
+  });
+
+  app.put('/api/admin/requests/:id', (req, res) => {
+    requireAdmin(req);
+    const { status } = (req.body ?? {}) as { status?: 'open' | 'stocked' };
+    const updated = updateProductRequestStatus(
+      db,
+      String(req.params.id),
+      status === 'stocked' ? 'stocked' : 'open'
+    );
+    sseHub.broadcast('requests_updated');
+    res.json({ request: updated });
   });
 
   app.put('/api/admin/settings', (req, res) => {
@@ -340,7 +416,7 @@ export function createApp(db: DatabaseSync): express.Express {
       caseSize,
       Math.max(0, Math.round(Number(b.sharePricePence ?? 0))),
       Math.max(0, Math.round(Number(b.aldiPricePence ?? 0))),
-      String(b.aldiUnitLabel || 'Aldi equiv.'),
+      String(b.aldiUnitLabel || 'Supermarket equiv.'),
       Math.max(0, Math.round(Number(b.wholesaleCaseCostPence ?? 0))),
       String(b.eanBarcode ?? '').trim(),
       String(b.supplierSku ?? '').trim(),

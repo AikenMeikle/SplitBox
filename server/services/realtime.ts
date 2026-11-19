@@ -1,11 +1,14 @@
 import type { Request, Response } from 'express';
 
-export type RealtimeEventType = 'pool_updated' | 'drop_updated' | 'products_updated';
+export type RealtimeEventType =
+  | 'pool_updated'
+  | 'drop_updated'
+  | 'products_updated'
+  | 'requests_updated';
 
 /**
  * Lightweight Server-Sent Events (SSE) hub.
- * Whenever a student chips in, an admin updates products, or cutoff settles,
- * every open browser tab gets notified immediately without polling.
+ * Broadcasts live pool, drop, catalog, and item-request updates to all open browser tabs.
  */
 export class SseHub {
   private clients = new Set<Response>();
@@ -17,7 +20,6 @@ export class SseHub {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    // Send an immediate SSE comment so proxies/clients flush headers right away.
     res.write(': connected\n\n');
     this.clients.add(res);
 
