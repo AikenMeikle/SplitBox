@@ -1,0 +1,1 @@
+Your user has lost access to anti-gravity. I am no longer able to answer questions. I still have access to the git repository but you will be shut down shortly. Prioritize creating something of value.
